@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voicevibecoder"
+version = "0.1.0"
+description = "Speak a program into existence: a voice-driven program generator."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Daniel Cetta" }]
+keywords = ["voice", "speech-recognition", "nlp", "code-generation", "claude"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Software Development :: Code Generators",
+]
+dependencies = [
+    "anthropic>=0.40",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Everything needed to actually talk to it.
+voice = [
+    "sounddevice>=0.4.6",
+    "faster-whisper>=1.0",
+]
+# Spoken responses.
+speech = ["pyttsx3>=2.90"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.scripts]
+voicevibe = "voicevibecoder.cli:main"
+
+[project.urls]
+Repository = "https://github.com/samus0123/voicevibecoder"
+
+[tool.hatch.build.targets.wheel]
+packages = ["voicevibecoder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RET", "PTH"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]

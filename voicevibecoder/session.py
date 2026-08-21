@@ -412,7 +412,7 @@ class Session:
         for attempt in range(self.config.self_heal_attempts):
             if result is None or result.ok:
                 return
-            self._respond(f"{result.error_line()} Fixing it.")
+            self._respond("Fixing it.")  # the error itself was just spoken
             try:
                 repair = self.generator.repair(result.transcript(), self.workspace)
             except Exception as exc:  # noqa: BLE001
