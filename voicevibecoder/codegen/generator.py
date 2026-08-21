@@ -21,6 +21,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from voicevibecoder.codegen import prompts
+from voicevibecoder.codegen.ideas import (
+    IDEA_SCHEMA,
+    IDEA_SYSTEM,
+    Idea,
+    parse_ideas,
+    request_text,
+)
 from voicevibecoder.codegen.tools import ToolBox
 from voicevibecoder.config import Config
 from voicevibecoder.workspace.project import Workspace
@@ -49,6 +56,8 @@ class Generator(Protocol):
     def build(self, instruction: str, workspace: Workspace) -> BuildResult: ...
 
     def explain(self, question: str, workspace: Workspace) -> str: ...
+
+    def ideate(self, topic: str, workspace: Workspace) -> list[Idea]: ...
 
     def reset(self) -> None: ...
 
@@ -100,6 +109,42 @@ class CodeGenerator:
             opening, toolbox, prompts.EXPLAIN_PROMPT, require_finish=False
         )
         return result.summary
+
+    def ideate(self, topic: str, workspace: Workspace) -> list[Idea]:
+        """Propose program ideas that clear the quality bar (or none at all).
+
+        A single structured-output call, deliberately outside the build
+        conversation: brainstorming should not pollute the context that the
+        next "now add colour" depends on.
+        """
+        response = self._client.messages.create(
+            model=self.config.model,
+            max_tokens=8000,
+            system=[
+                {
+                    "type": "text",
+                    "text": IDEA_SYSTEM,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": request_text(topic, workspace.describe()),
+                }
+            ],
+            thinking={"type": "adaptive"},
+            output_config={
+                "effort": self.config.effort,
+                "format": {"type": "json_schema", "schema": IDEA_SCHEMA},
+            },
+        )
+        if response.stop_reason == "refusal":
+            return []
+        payload = next(
+            (block.text for block in response.content if block.type == "text"), ""
+        )
+        return parse_ideas(payload, self.config.idea_bar)
 
     # -- the loop --------------------------------------------------------
     def _run_loop(

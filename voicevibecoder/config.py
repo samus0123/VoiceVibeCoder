@@ -55,6 +55,10 @@ class Config:
     self_heal_attempts: int = 2  # feed tracebacks back to Claude this many times
     run_timeout_s: float = 30.0
     confirm_destructive: bool = True  # "delete X" needs a spoken "yes"
+    idea_bar: int = 80  # ideas scoring below this are never spoken aloud
+    git: bool = True  # commit every accepted change
+    commit_mode: str = "auto"  # auto | typed | off
+    ai_trailer: bool = True  # mark generated commits as AI-assisted
     history_turns: int = 12  # build turns kept in the model conversation
 
     # ------------------------------------------------------------------

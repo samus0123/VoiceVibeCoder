@@ -24,6 +24,8 @@ class Kind(Enum):
     """What the user wants to happen."""
 
     BUILD = "build"          # open-ended: hand to Claude, it writes files
+    IDEAS = "ideas"          # ask for genius-only proposals
+    BUILD_IDEA = "build_idea"  # "build the second one"
     EXPLAIN = "explain"      # ask about the code, do not modify it
     RUN = "run"              # execute the current entry point
     STOP = "stop"            # interrupt whatever is running
@@ -102,6 +104,14 @@ _RULES: tuple[tuple[str, Kind, bool], ...] = (
     (rf"(?:the )?(?:main|entry ?point)(?: file)? is {_FILE_REF}", Kind.ENTRYPOINT, True),
     (r"(?:new|start|create|begin)(?: a)?(?: new)? (?:project|app|program|thing)"
      r"(?: (?:called|named))? (?P<name>[\w .\-/]{1,60})", Kind.NEW_PROJECT, False),
+
+    (r"(?:give me|got any|have you got any|any|i (?:need|want)|suggest|pitch me)"
+     r"(?: some| a few| three)? ideas?(?: for| about| around| involving)?(?P<topic>.*)", Kind.IDEAS, False),
+    (r"what should i (?:build|make|write|do)(?P<topic>.*)", Kind.IDEAS, False),
+    (r"surprise me", Kind.IDEAS, False),
+
+    (r"(?:build|make|do|let's do|go with|pick) (?:the |that |number )?"
+     r"(?P<choice>first|second|third|last|one|two|three|1|2|3)(?: one)?", Kind.BUILD_IDEA, False),
 
     (r"(?:explain|describe|what does|how does|why does|walk me through)\b(?P<question>.*)", Kind.EXPLAIN, False),
 
