@@ -8,6 +8,7 @@ here can ever be the reason a session fails to start.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from typing import Protocol, runtime_checkable
@@ -38,7 +39,7 @@ class CommandSpeaker:
         self._argv = argv
 
     def say(self, text: str) -> None:
-        try:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             subprocess.run(  # noqa: S603 — argv is built from a fixed table
                 [*self._argv, shorten(text)],
                 check=False,
@@ -46,8 +47,6 @@ class CommandSpeaker:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        except (OSError, subprocess.SubprocessError):
-            pass
 
 
 class Pyttsx3Speaker:

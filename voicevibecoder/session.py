@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from voicevibecoder.codegen.generator import BuildResult, Generator
@@ -102,11 +102,11 @@ class Session:
         if not raw:
             return True
 
-        if self.config.wake_phrase and not self.dictation_target:
-            if not heard_wake_phrase(raw, self.config.wake_phrase):
-                self.console.write(f"  ·  (not addressed to me: {raw})", "dim")
-                self._journal_line(raw, "", "unaddressed", "")
-                return True
+        gated = self.config.wake_phrase and not self.dictation_target
+        if gated and not heard_wake_phrase(raw, self.config.wake_phrase or ""):
+            self.console.write(f"  ·  (not addressed to me: {raw})", "dim")
+            self._journal_line(raw, "", "unaddressed", "")
+            return True
 
         # Dictation is literal: the words are the payload, so the NLP layer
         # and the grammar are bypassed except for the phrase that ends it.
@@ -501,7 +501,7 @@ class Session:
         was heard, what it was understood as, and what it was treated as.
         """
         entry = {
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "at": datetime.now(UTC).isoformat(timespec="seconds"),
             "heard": raw,
             "understood": understood,
             "intent": kind,

@@ -71,7 +71,7 @@ class Config:
     def state_dir(self) -> Path:
         return self.workspace / STATE_DIRNAME
 
-    def merged(self, **overrides: Any) -> "Config":
+    def merged(self, **overrides: Any) -> Config:
         """Return a copy with the non-``None`` overrides applied."""
         clean = {k: v for k, v in overrides.items() if v is not None}
         unknown = set(clean) - {f.name for f in fields(self)}

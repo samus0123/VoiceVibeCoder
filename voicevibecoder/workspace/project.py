@@ -50,7 +50,7 @@ class WorkspaceState:
         )
 
     @classmethod
-    def from_json(cls, raw: str) -> "WorkspaceState":
+    def from_json(cls, raw: str) -> WorkspaceState:
         data = json.loads(raw)
         return cls(
             entrypoint=data.get("entrypoint"),

@@ -38,7 +38,7 @@ def list_devices() -> str:
 
 
 @contextmanager
-def open_stream(config: Config) -> Iterator["queue.Queue[np.ndarray]"]:
+def open_stream(config: Config) -> Iterator[queue.Queue[np.ndarray]]:
     """Yield a queue that fills with mono float32 frames from the mic."""
     sd = _sounddevice()
     frames: queue.Queue[np.ndarray] = queue.Queue()
