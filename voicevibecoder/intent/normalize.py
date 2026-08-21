@@ -89,6 +89,9 @@ EXTENSIONS = {
     "log": "log",
 }
 
+# Longest spoken extension, in words: "h t m l" is four.
+_MAX_EXTENSION_SPAN = max(len(key.split()) for key in EXTENSIONS)
+
 _WORD_NUMBERS = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
@@ -165,7 +168,7 @@ def to_filename(spoken: str) -> str:
 def _match_extension(tokens: list[str], start: int) -> tuple[str, int]:
     """Longest spoken extension starting at ``tokens[start]``."""
     remaining = [_bare(t) for t in tokens[start:]]
-    for span in range(min(3, len(remaining)), 0, -1):
+    for span in range(min(_MAX_EXTENSION_SPAN, len(remaining)), 0, -1):
         candidate = " ".join(remaining[:span])
         if candidate in EXTENSIONS:
             return EXTENSIONS[candidate], span

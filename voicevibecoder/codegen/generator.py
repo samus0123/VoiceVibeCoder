@@ -24,7 +24,9 @@ from voicevibecoder.codegen import prompts
 from voicevibecoder.codegen.ideas import (
     IDEA_SCHEMA,
     IDEA_SYSTEM,
+    IMPROVE_SYSTEM,
     Idea,
+    improvement_request_text,
     parse_ideas,
     request_text,
 )
@@ -55,9 +57,13 @@ class Generator(Protocol):
 
     def build(self, instruction: str, workspace: Workspace) -> BuildResult: ...
 
+    def repair(self, failure_transcript: str, workspace: Workspace) -> BuildResult: ...
+
     def explain(self, question: str, workspace: Workspace) -> str: ...
 
     def ideate(self, topic: str, workspace: Workspace) -> list[Idea]: ...
+
+    def suggest_improvements(self, summary: str, workspace: Workspace) -> list[Idea]: ...
 
     def reset(self) -> None: ...
 
@@ -113,26 +119,33 @@ class CodeGenerator:
     def ideate(self, topic: str, workspace: Workspace) -> list[Idea]:
         """Propose program ideas that clear the quality bar (or none at all).
 
-        A single structured-output call, deliberately outside the build
-        conversation: brainstorming should not pollute the context that the
-        next "now add colour" depends on.
+        Brainstorming runs outside the build conversation on purpose: it
+        should not pollute the context that the next "now add colour" needs.
         """
+        return self._propose(IDEA_SYSTEM, request_text(topic, workspace.describe()))
+
+    def suggest_improvements(self, summary: str, workspace: Workspace) -> list[Idea]:
+        """Look at what was just built and ask what would make it remarkable."""
+        return self._propose(
+            IMPROVE_SYSTEM,
+            improvement_request_text(
+                summary, workspace.describe(), read_excerpt(workspace)
+            ),
+        )
+
+    def _propose(self, system_prompt: str, request: str) -> list[Idea]:
+        """One structured-output call, scored by the model, filtered here."""
         response = self._client.messages.create(
             model=self.config.model,
             max_tokens=8000,
             system=[
                 {
                     "type": "text",
-                    "text": IDEA_SYSTEM,
+                    "text": system_prompt,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            messages=[
-                {
-                    "role": "user",
-                    "content": request_text(topic, workspace.describe()),
-                }
-            ],
+            messages=[{"role": "user", "content": request}],
             thinking={"type": "adaptive"},
             output_config={
                 "effort": self.config.effort,
@@ -263,6 +276,25 @@ def _starts_with_tool_result(message: dict[str, Any]) -> bool:
         return False
     first = content[0]
     return isinstance(first, dict) and first.get("type") == "tool_result"
+
+
+def read_excerpt(workspace: Workspace, budget: int = 12000) -> str:
+    """As much of the workspace source as fits in a sensible prompt budget."""
+    parts: list[str] = []
+    remaining = budget
+    for relative in workspace.files():
+        if remaining <= 0:
+            parts.append("... (further files omitted)")
+            break
+        try:
+            content = workspace.read(relative)
+        except Exception:  # noqa: BLE001 — binaries and oddities are skipped
+            continue
+        if len(content) > remaining:
+            content = content[:remaining] + "\n... (truncated)"
+        remaining -= len(content)
+        parts.append(f"--- {relative} ---\n{content}")
+    return "\n\n".join(parts) or "(the workspace is empty)"
 
 
 def _fallback_summary(changed: list[str]) -> str:

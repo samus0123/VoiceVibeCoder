@@ -26,6 +26,7 @@ class Kind(Enum):
     BUILD = "build"          # open-ended: hand to Claude, it writes files
     IDEAS = "ideas"          # ask for genius-only proposals
     BUILD_IDEA = "build_idea"  # "build the second one"
+    IMPROVE = "improve"      # "how could this be better?"
     EXPLAIN = "explain"      # ask about the code, do not modify it
     RUN = "run"              # execute the current entry point
     STOP = "stop"            # interrupt whatever is running
@@ -104,6 +105,11 @@ _RULES: tuple[tuple[str, Kind, bool], ...] = (
     (rf"(?:the )?(?:main|entry ?point)(?: file)? is {_FILE_REF}", Kind.ENTRYPOINT, True),
     (r"(?:new|start|create|begin)(?: a)?(?: new)? (?:project|app|program|thing)"
      r"(?: (?:called|named))? (?P<name>[\w .\-/]{1,60})", Kind.NEW_PROJECT, False),
+
+    (r"(?:how (?:could|can|would|do) (?:this|it|we|i) (?:be )?(?:better|improved?)|"
+     r"(?:any )?ideas? (?:to|for) improv\w*(?: this| it)?|"
+     r"what would make (?:this|it) (?:better|great|remarkable)|"
+     r"(?:how do i|how to) improve (?:this|it)|make it better how)", Kind.IMPROVE, False),
 
     (r"(?:give me|got any|have you got any|any|i (?:need|want)|suggest|pitch me)"
      r"(?: some| a few| three)? ideas?(?: for| about| around| involving)?(?P<topic>.*)", Kind.IDEAS, False),

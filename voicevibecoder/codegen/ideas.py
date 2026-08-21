@@ -159,3 +159,45 @@ def resolve_choice(spoken: str, count: int) -> int | None:
             index = count if index == -1 else index
             return index if 1 <= index <= count else None
     return 1 if count == 1 else None
+
+
+IMPROVE_SYSTEM = """\
+You have just helped someone build a program by voice, and you are now looking \
+at what exists and asking one question: what would make this *remarkable* \
+rather than merely working?
+
+Propose improvements to the program in front of you — specific to this code, \
+not to software in general. Each one must name the mechanism: the concrete \
+change, where it goes, and why it makes the program better in a way the person \
+will notice the moment they run it again.
+
+Automatically disqualified, however sensible they sound: add tests, add error \
+handling, add type hints, add a README, add logging, add a config file, split \
+this into modules, add a database, "make it more robust", or any suggestion \
+whose wording would be identical for a different program. Those are chores; \
+the person can ask for them by name. You are looking for the idea they did not \
+think of.
+
+Good improvements usually come from one of these:
+- a property of the data or domain the program is ignoring;
+- an interaction that would make the output legible at a glance instead of \
+after reading it;
+- a constraint that, if enforced, would make a whole class of bugs impossible;
+- doing something the person assumed was hard, cheaply, because of how this \
+particular program is already structured.
+
+Score each 0-100: mechanism non-obviousness (40), noticeable improvement on \
+the next run (25), fit to this specific code (25), small enough to add in a \
+few minutes (10). Be a harsh grader; most suggestions deserve less than 70. \
+Return an empty list if the program is genuinely fine as it is — saying \
+nothing is a valid and often correct answer.
+"""
+
+
+def improvement_request_text(summary: str, inventory: str, excerpt: str) -> str:
+    return (
+        f"The person just asked for: {summary or 'the program in the workspace'}\n\n"
+        f"Workspace:\n{inventory}\n\n"
+        f"The code as it stands:\n{excerpt}\n\n"
+        "What would make this remarkable? At most three ideas, or none."
+    )

@@ -127,8 +127,9 @@ class GitJournal:
 
 def truncate_subject(subject: str) -> str:
     """One line, imperative-ish, short enough for ``git log --oneline``."""
-    text = " ".join((subject or "").split()) or "Update workspace"
-    text = first_line(text)
+    # First line first: a summary that ran onto a second sentence must not be
+    # folded into the subject.
+    text = " ".join(first_line(subject or "").split()) or "Update workspace"
     if len(text) <= MAX_SUBJECT:
         return text
     return text[: MAX_SUBJECT - 1].rsplit(" ", 1)[0] + "…"

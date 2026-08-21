@@ -79,6 +79,10 @@ class Endpointer:
         self._speaking = False
         self._silence_run = 0
         self._voiced: list[np.ndarray] = []
+        # Frames actually above threshold. The minimum-duration test counts
+        # these, not buffered frames: pre-roll and hangover would otherwise
+        # make a door slam look like a third of a second of speech.
+        self._voiced_count = 0
 
     # -- introspection, useful for meters and tests ----------------------
     @property
@@ -104,6 +108,7 @@ class Endpointer:
             if energy > self.open_threshold:
                 self._speaking = True
                 self._silence_run = 0
+                self._voiced_count = 1
                 self._voiced = list(self._preroll)
                 self._preroll.clear()
             return None
@@ -111,6 +116,7 @@ class Endpointer:
         self._voiced.append(frame)
         if energy > self.open_threshold * self.RELEASE_FACTOR:
             self._silence_run = 0
+            self._voiced_count += 1
         else:
             self._silence_run += 1
 
@@ -139,9 +145,10 @@ class Endpointer:
 
     def _close(self) -> Segment | None:
         voiced, self._voiced = self._voiced, []
+        spoken_frames, self._voiced_count = self._voiced_count, 0
         self._speaking = False
         self._silence_run = 0
         self._preroll.clear()
-        if len(voiced) < self._min_frames:
+        if spoken_frames < self._min_frames:
             return None  # a cough, a chair, a keyboard clack
         return Segment(np.concatenate(voiced), self.sample_rate)

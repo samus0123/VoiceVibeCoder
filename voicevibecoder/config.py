@@ -56,6 +56,7 @@ class Config:
     run_timeout_s: float = 30.0
     confirm_destructive: bool = True  # "delete X" needs a spoken "yes"
     idea_bar: int = 80  # ideas scoring below this are never spoken aloud
+    suggest_improvements: bool = True  # volunteer one idea after each build
     git: bool = True  # commit every accepted change
     commit_mode: str = "auto"  # auto | typed | off
     ai_trailer: bool = True  # mark generated commits as AI-assisted
