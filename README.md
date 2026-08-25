@@ -1,0 +1,253 @@
+# VoiceVibeCoder
+
+**Say what you want. It gets written, run, and committed.**
+
+VoiceVibeCoder is a program that writes programs from your voice. You speak;
+it transcribes locally, works out whether you gave it a *command* or a
+*specification*, writes real files, runs them, fixes its own mistakes, commits
+the result, and then tells you the one idea that would make what you just built
+remarkable.
+
+```
+🎙  um, make me a, uh, program that totals the numbers i give it
+⇢  make me a program that totals the numbers i give it
+✎  main.py
+◈  Wrote main.py, which totals the numbers it is given.
+▶  main.py
+✖  NameError: name 'numbrs' is not defined
+◈  Fixing it.
+✎  main.py
+▶  main.py
+   total: 31
+◈  main.py ran cleanly. It printed: total: 31
+⑂  8f2a1c3  Wrote main.py, which totals the numbers it is given.
+◈  One idea: Sparkline Output. Print the numbers as a one-line sparkline above
+   the total, so the shape of the data is visible before the arithmetic.
+   Say build the first one to do it.
+```
+
+---
+
+## The idea
+
+Dictating code is a bad idea. Dictating *intent* is a very good one — and the
+gap between them is where all the engineering lives.
+
+    microphone
+      → endpointer          when did a sentence start and stop?
+      → transcription       words, locally, offline
+      → NLP                 what was meant, not what was heard
+      → command grammar     control phrase, or specification?
+      ├─ control            undo / run / show / delete — instant, free, exact
+      └─ specification      Claude writes the files
+      → runner              does it actually work?
+      → git                 one commit per accepted change
+      → improvement         what would make this remarkable?
+
+Two rules hold the design together:
+
+**Control is a grammar, code is a conversation.** "undo that" must undo, every
+time, in microseconds, for nothing. It is a closed set of anchored patterns, so
+it never reaches a model. Everything the grammar does *not* claim is an
+open-ended specification, and that goes to Claude with the full session
+context. `run it` is a command; `run the simulation ten thousand times` is a
+specification, and the grammar knows the difference.
+
+**Speech is lossy, so everything is reversible.** Every change is wrapped in a
+snapshot before it happens and committed after it lands. "undo that" is a
+directory restore, not an apology.
+
+---
+
+## Install
+
+```bash
+pip install -e .            # the brain
+pip install -e '.[voice]'   # + microphone and local speech recognition
+pip install -e '.[speech]'  # + spoken responses
+```
+
+On Debian/Ubuntu the microphone also needs PortAudio: `sudo apt install libportaudio2`.
+
+Authentication follows the Anthropic SDK: export `ANTHROPIC_API_KEY`, or run
+`ant auth login` once and let the SDK find the profile.
+
+---
+
+## Use
+
+```bash
+voicevibe                                  # listen on the microphone
+voicevibe --text                           # type instead of speaking
+voicevibe --say "make a maze generator"    # one instruction, then exit
+voicevibe --workspace ~/lab --type-commits # typed commit messages
+voicevibe --wake "hey vibe"                # only act when addressed
+voicevibe --list-devices                   # which microphone is which
+```
+
+**No microphone? It is still the same program.** `--text` reads typed lines and
+feeds them through the identical pipeline — NLP, grammar, workspace, runner and
+all. That is also how the tests and the demo run:
+
+```bash
+python examples/offline_demo.py    # the whole loop, no API key, no network
+```
+
+### What you can say
+
+Everything not in this table is a specification: describe the program you want,
+in whatever words you would use to describe it to a person.
+
+| Say | What happens |
+| --- | --- |
+| *make a command line to-do list that saves to JSON* | it writes the files |
+| *now add due dates* | follow-ups keep the context |
+| **run it** / **stop it** | run the entry point, or interrupt it |
+| **undo that** / *scratch that* | restore the previous snapshot |
+| **list files** | inventory of the workspace |
+| **show me main dot pie** | reads the file back, on screen |
+| **delete main.py** | asks first, then deletes |
+| **the main file is app dot pie** | sets what "run it" means |
+| **new project called radar** | fresh workspace, cleared context |
+| **dictate into notes dot m d** | literal text until "end dictation" |
+| **explain the parser** | answers, changes nothing |
+| **give me ideas** / *what should I build* | genius-only proposals |
+| **how could this be better** | improvements to what exists |
+| **build the second one** | builds a proposal by ordinal |
+| **repeat that** / **help** / **quit** | |
+
+---
+
+## The parts
+
+### Natural language processing (`intent/nlp.py`)
+
+Speech recognisers are trained on prose, and prose has no `def`. Between the
+transcript and the grammar sits a pipeline of pure token functions:
+
+| Stage | Heard | Understood |
+| --- | --- | --- |
+| self-repair | "make it red, actually no, make it blue" | "make it blue" |
+| disfluency removal | "um, uh, make it faster" | "make it faster" |
+| domain lexicon | "write a deaf that uses numb pie" | "write a def that uses numpy" |
+| number folding | "run it ten thousand times" | "run it 10000 times" |
+| sentence typing | "what does the parser do" | *question, not instruction* |
+
+The lexicon is small and curated on purpose — every entry is a phrase that is
+not a plausible thing to say to a coding assistant, so correcting it is safe. A
+big fuzzy-matching table would "fix" words you actually meant. `Utterance`
+carries the edits it made, so the console can show `heard → understood` and you
+can tell a bad idea from a bad transcript at a glance.
+
+Spoken paths get the same treatment: "source slash web app dot j s" becomes
+`source/web_app.js`, and a file slot that contains prose rather than a path is
+rejected — which is why "delete the duplicate entries from the list" is a
+programming instruction and not a deletion.
+
+### Endpointing (`audio/vad.py`)
+
+Energy-based VAD with three properties that matter in a real room: an adaptive
+noise floor re-estimated from silent frames only (a fan spinning up does not
+trip the gate), hysteresis (the pause between words does not chop the sentence
+in half), and a pre-roll buffer (the plosive at the start of "print this" is
+never clipped). The minimum-duration test counts *voiced* frames, so a door
+slam is not mistaken for a third of a second of speech.
+
+### The workspace (`workspace/`)
+
+Every path is resolved against the workspace root and rejected if it lands
+outside — absolute paths, `..` walks, and symlinks pointing out of the tree all
+fail identically. The model proposes paths; the workspace decides. There is no
+shell tool: running code is *your* verb, so a spoken sentence can never become
+an unreviewed command.
+
+Programs run in a child process, rooted at the workspace, with a wall-clock
+limit and captured output. When one fails, the traceback goes straight back to
+the model that wrote it, up to `self_heal_attempts` times.
+
+### Ideas with a bar (`codegen/ideas.py`)
+
+Ask any model for app ideas and you get a to-do list with tags. So the request
+is structured instead: every idea must name the *mechanism* — the specific
+trick, inversion or constraint that makes it work — and score itself against a
+rubric. To-do lists, weather dashboards, habit trackers and chat wrappers are
+disqualified by name. The model scores; the client filters at `idea_bar`
+(default 80), so tightening the standard needs no prompt changes.
+
+The same machinery, pointed at the code you just built, answers *"what would
+make this remarkable?"* — with chores explicitly disqualified: add tests, add
+error handling, add type hints, add a README, split into modules. Those you can
+ask for by name. It is looking for the thing you did not think of, and
+returning nothing is a valid answer.
+
+### Version control (`workspace/versioning.py`)
+
+Snapshots exist for "undo that": fast, in-process, disposable. Git exists for
+what you want after an hour of talking — a readable history. Commits are cheap
+and unlimited: every accepted change is one commit, each carrying the spoken
+instruction that caused it and an AI-assisted trailer. Commit messages are the
+model's spoken summary by default, or **typed** (`--type-commits`), because
+dictating prose is pleasant and spelling out a conventional-commit subject is
+not.
+
+### Nothing is dropped
+
+Every utterance is journalled to `.voicevibe/transcript.jsonl` with what was
+heard, what it was understood as, and the intent it resolved to. Unrecognised
+input becomes a build instruction rather than an error; an utterance that
+raises is reported and the loop continues. A pending question that gets a new
+instruction instead of an answer drops the question and obeys the instruction —
+the way a person would.
+
+---
+
+## Configuration
+
+Defaults → `voicevibe.toml` in the workspace → `VVC_*` environment variables →
+command line flags. See [`voicevibe.example.toml`](voicevibe.example.toml) for
+every key.
+
+```toml
+[voicevibe]
+model = "claude-opus-5"
+effort = "high"
+whisper_model = "base.en"
+auto_run = true
+self_heal_attempts = 2
+idea_bar = 80
+commit_mode = "auto"        # auto | typed | off
+```
+
+---
+
+## Development
+
+```bash
+pip install -e '.[dev]'
+pytest                       # 127 tests, no microphone or API key required
+ruff check voicevibecoder
+```
+
+The test suite runs the entire application against a scripted generator: the
+NLP pipeline, path resolution, endpointing with synthetic audio, workspace
+containment, snapshots and undo, the runner, the git journal, idea filtering,
+and the session state machine end to end.
+
+## Layout
+
+```
+voicevibecoder/
+  config.py          layered configuration
+  session.py         the state machine everything else serves
+  console.py         heard vs. understood, on screen
+  cli.py             microphone or keyboard, same path
+  audio/             capture + endpointing
+  speech/            transcription in, speech out
+  intent/            NLP pipeline + command grammar + spoken paths
+  codegen/           prompts, tools, the Claude loop, the idea bar
+  workspace/         containment, snapshots, runner, git
+```
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
