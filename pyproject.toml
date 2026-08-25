@@ -21,20 +21,26 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
     "Topic :: Software Development :: Code Generators",
 ]
-dependencies = [
-    "anthropic>=0.40",
-    "numpy>=1.24",
-]
+# The core program is standard library only: the grammar, the NLP pipeline, the
+# workspace, the runner, and the local brain (which speaks HTTP via urllib).
+# Every capability beyond that is an extra, so a phone never builds a Rust
+# wheel for a code path it will not run.
+dependencies = []
 
 [project.optional-dependencies]
-# Everything needed to actually talk to it.
+# Thinking with Claude.
+claude = ["anthropic>=0.40"]
+# Listening on a real microphone, transcribing locally.
 voice = [
+    "numpy>=1.24",
     "sounddevice>=0.4.6",
     "faster-whisper>=1.0",
 ]
-# Spoken responses.
+# Spoken responses on desktop (Android uses termux-tts-speak).
 speech = ["pyttsx3>=2.90"]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+# Everything, the way it runs on a laptop.
+all = ["voicevibecoder[claude,voice,speech]"]
+dev = ["pytest>=8.0", "ruff>=0.6", "numpy>=1.24", "anthropic>=0.40"]
 
 [project.scripts]
 voicevibe = "voicevibecoder.cli:main"

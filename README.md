@@ -102,16 +102,23 @@ point is working offline should not need a package index to start.
 
 ## Install
 
+The core program is **standard library only** — the grammar, the NLP pipeline,
+the workspace, the runner and the local brain need nothing from PyPI. Each
+capability beyond that is an extra, so no machine builds a wheel for a code
+path it will not run.
+
 ```bash
-pip install -e .            # the brain
+pip install -e '.[all]'     # the laptop install: Claude, microphone, speech
+pip install -e '.[claude]'  # + Claude only (you have a key, no microphone)
 pip install -e '.[voice]'   # + microphone and local speech recognition
-pip install -e '.[speech]'  # + spoken responses
+pip install -e .            # nothing compiled: local brain + typed input
 ```
 
 On Debian/Ubuntu the microphone also needs PortAudio: `sudo apt install libportaudio2`.
 
-Authentication follows the Anthropic SDK: export `ANTHROPIC_API_KEY`, or run
-`ant auth login` once and let the SDK find the profile.
+For the Claude brain, authentication follows the Anthropic SDK: export
+`ANTHROPIC_API_KEY`, or run `ant auth login` once and let the SDK find the
+profile. For the local brain there is nothing to authenticate.
 
 ---
 
@@ -146,12 +153,25 @@ Install **Termux** *and* **Termux:API** from F-Droid — the Play Store builds a
 stale and cannot talk to each other — then:
 
 ```bash
-pkg install python python-numpy git termux-api
-pip install anthropic                 # may need `pkg install rust` to build pydantic-core
+pkg install python git termux-api
 git clone https://github.com/samus0123/voicevibecoder && cd voicevibecoder
-pip install -e .
+pip install -e .                      # nothing to compile, nothing to wait for
+voicevibe --brain local --local-url http://<your-desktop>:11434
+```
+
+That install is deliberately empty of dependencies: on a phone, listening goes
+through Termux:API rather than PortAudio, and the local brain speaks HTTP from
+the standard library, so neither numpy nor a Rust toolchain is involved.
+`--android` is implied inside Termux.
+
+To use Claude from the phone instead, add the extra — budget time for it, since
+`pydantic-core` has no Termux wheel and builds from source:
+
+```bash
+pkg install rust binutils
+pip install -e '.[claude]'
 export ANTHROPIC_API_KEY=...
-voicevibe                             # --android is implied inside Termux
+voicevibe
 ```
 
 Listening is one Android recognition session per utterance: it blocks until you
