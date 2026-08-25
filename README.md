@@ -9,7 +9,7 @@ the result, and then tells you the one idea that would make what you just built
 remarkable.
 
 ```
-◈  What do you want to build?
+◈  What do you want your program to do?
 🎙  um, make me a, uh, program that totals the numbers i give it
 ⇢  make me a program that totals the numbers i give it
 ✎  main.py

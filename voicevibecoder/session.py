@@ -36,8 +36,8 @@ from voicevibecoder.workspace.project import Workspace, WorkspaceError
 from voicevibecoder.workspace.runner import RunnerError, RunResult, run_program
 from voicevibecoder.workspace.versioning import GitJournal
 
-GREETING = "What do you want to build?"
-GREETING_AGAIN = "What do you want to build next?"
+GREETING = "What do you want your program to do?"
+GREETING_AGAIN = "What do you want your program to do next?"
 
 
 @dataclass
@@ -81,8 +81,8 @@ class Session:
         """Open the session by asking the question, out loud and on screen.
 
         An empty workspace gets the bare question; a workspace you are coming
-        back to gets its state first, so "what do you want to build?" is not
-        asked as though the last hour never happened.
+        back to gets its state first, so the question is not asked as though
+        the last hour never happened.
         """
         files = self.workspace.files()
         if not files:
