@@ -144,8 +144,10 @@ def main(argv: list[str] | None = None) -> int:
     console.write(f"  workspace: {workspace.root}", "dim")
 
     if args.say:
-        session.handle(args.say)
+        session.handle(args.say)  # a one-shot needs no greeting
         return 0
+
+    session.greet()
 
     try:
         source = pick_source(args, config, console)

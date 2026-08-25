@@ -36,6 +36,9 @@ from voicevibecoder.workspace.project import Workspace, WorkspaceError
 from voicevibecoder.workspace.runner import RunnerError, RunResult, run_program
 from voicevibecoder.workspace.versioning import GitJournal
 
+GREETING = "What do you want to build?"
+GREETING_AGAIN = "What do you want to build next?"
+
 
 @dataclass
 class PendingAction:
@@ -74,6 +77,23 @@ class Session:
     # ------------------------------------------------------------------
     # entry points
     # ------------------------------------------------------------------
+    def greet(self) -> None:
+        """Open the session by asking the question, out loud and on screen.
+
+        An empty workspace gets the bare question; a workspace you are coming
+        back to gets its state first, so "what do you want to build?" is not
+        asked as though the last hour never happened.
+        """
+        files = self.workspace.files()
+        if not files:
+            self._respond(GREETING)
+            return
+        entrypoint = self.workspace.guess_entrypoint()
+        where = f"{_count_files(self.workspace)}"
+        if entrypoint:
+            where += f" Run it means {entrypoint}."
+        self._respond(f"{where} {GREETING_AGAIN}")
+
     def run(self, transcripts: Iterable[str]) -> None:
         """Consume utterances until one of them says stop."""
         for transcript in transcripts:
@@ -323,7 +343,10 @@ class Session:
         self.journal = GitJournal(
             self.workspace.root, enabled=self.config.git, trailer=self.config.ai_trailer
         )
-        self._respond(f"Started {name}. The workspace is empty and I have forgotten the last project.")
+        self._respond(
+            f"Started {name}. The workspace is empty and I have forgotten "
+            f"the last project. {GREETING}"
+        )
         return True
 
     def _on_dictate_start(self, intent: Intent, _utterance: nlp.Utterance) -> bool:

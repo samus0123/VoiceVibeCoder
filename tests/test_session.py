@@ -209,3 +209,22 @@ def test_repeat_says_the_last_thing_again(session, speaker):
     last = speaker.said[-1]
     session.handle("say that again")
     assert speaker.said[-1] == last
+
+
+def test_the_session_opens_by_asking_what_to_build(session, speaker):
+    session.greet()
+    assert speaker.said == ["What do you want to build?"]
+
+
+def test_a_workspace_you_return_to_is_described_first(session, workspace, speaker):
+    workspace.write("main.py", "print(1)\n")
+    session.greet()
+    greeting = speaker.said[-1]
+    assert "1 file in the workspace" in greeting
+    assert "Run it means main.py" in greeting
+    assert greeting.endswith("What do you want to build next?")
+
+
+def test_a_new_project_asks_again(session, speaker):
+    session.handle("new project called radar")
+    assert speaker.said[-1].endswith("What do you want to build?")
