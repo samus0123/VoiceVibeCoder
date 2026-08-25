@@ -93,6 +93,51 @@ all. That is also how the tests and the demo run:
 python examples/offline_demo.py    # the whole loop, no API key, no network
 ```
 
+### On Android
+
+The desktop chain does not port: there is no PortAudio on a phone and no
+CTranslate2 wheel for Android, so `sounddevice` and `faster-whisper` are both
+out. Android already does capture, endpointing and recognition behind one
+system service, so VoiceVibeCoder uses that instead. Everything downstream is
+unchanged.
+
+Install **Termux** *and* **Termux:API** from F-Droid — the Play Store builds are
+stale and cannot talk to each other — then:
+
+```bash
+pkg install python python-numpy git termux-api
+pip install anthropic                 # may need `pkg install rust` to build pydantic-core
+git clone https://github.com/samus0123/voicevibecoder && cd voicevibecoder
+pip install -e .
+export ANTHROPIC_API_KEY=...
+voicevibe                             # --android is implied inside Termux
+```
+
+Listening is one Android recognition session per utterance: it blocks until you
+stop talking, hands over the text, and listens again. Responses are spoken
+through `termux-tts-speak`. A silent session is ignored; three failed sessions
+in a row stop with a setup hint rather than spinning on a missing permission.
+
+Two honest caveats. **Recognition may not be local** — `termux-speech-to-text`
+uses Android's recognition service, usually Google's, which sends audio to the
+cloud unless you have installed offline recognition for your language. The
+desktop path keeps dictated code on the machine; this one does not. And **the
+`anthropic` install pulls `pydantic-core`**, which is Rust: if there is no
+prebuilt wheel for your Termux target, `pkg install rust` first and expect a
+long build.
+
+**The alternative that needs nothing:** run the session on a real machine and
+use the phone as a voice front-end over SSH.
+
+```bash
+# in Termux, talking to a session running on your laptop
+while text=$(termux-speech-to-text); do echo "$text"; done | ssh laptop 'voicevibe --text'
+```
+
+Recognition happens on the phone, the build happens where your toolchain is,
+and nothing about the pipeline changes — `--text` is the same path speech
+takes, minus the microphone.
+
 ### What you can say
 
 Everything not in this table is a specification: describe the program you want,
@@ -224,7 +269,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 127 tests, no microphone or API key required
+pytest                       # 148 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 
@@ -242,7 +287,7 @@ voicevibecoder/
   console.py         heard vs. understood, on screen
   cli.py             microphone or keyboard, same path
   audio/             capture + endpointing
-  speech/            transcription in, speech out
+  speech/            transcription in, speech out, Android via Termux:API
   intent/            NLP pipeline + command grammar + spoken paths
   codegen/           prompts, tools, the Claude loop, the idea bar
   workspace/         containment, snapshots, runner, git

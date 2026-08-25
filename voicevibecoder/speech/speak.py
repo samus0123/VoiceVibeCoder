@@ -83,6 +83,18 @@ def build_speaker(config: Config) -> Speaker:
     if wanted == "off":
         return NullSpeaker()
 
+    if wanted in ("auto", "termux"):
+        from voicevibecoder.speech.android import (  # noqa: PLC0415
+            TermuxSpeaker,
+            has_termux_api,
+            is_termux,
+        )
+
+        if has_termux_api() and (wanted == "termux" or is_termux()):
+            return TermuxSpeaker()
+        if wanted == "termux":
+            return NullSpeaker()
+
     if wanted in ("auto", "pyttsx3"):
         try:
             return Pyttsx3Speaker()

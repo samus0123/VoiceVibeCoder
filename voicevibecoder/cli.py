@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-devices", action="store_true", help="show input devices and exit"
     )
     parser.add_argument("--whisper-model", help="faster-whisper model (default: base.en)")
+    parser.add_argument(
+        "--android",
+        action="store_true",
+        help="listen through Termux:API instead of PortAudio (auto on Termux)",
+    )
     parser.add_argument("--quiet", action="store_true", help="do not speak responses")
     parser.add_argument(
         "--no-run", action="store_true", help="do not run programs automatically"
@@ -143,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        source = typed_lines(console) if args.text else spoken_lines(config, console)
+        source = pick_source(args, config, console)
         session.run(source)
     except RuntimeError as exc:  # missing microphone or ASR model
         console.error(str(exc))
@@ -167,6 +172,27 @@ def typed_lines(console: Console) -> Iterator[str]:
             return
         if line.strip():
             yield line
+
+
+def pick_source(
+    args: argparse.Namespace, config: config_module.Config, console: Console
+) -> Iterator[str]:
+    """Keyboard, Android speech services, or microphone — in that order."""
+    from voicevibecoder.speech.android import is_termux  # noqa: PLC0415
+
+    if args.text:
+        return typed_lines(console)
+    if args.android or config.asr_backend == "termux" or is_termux():
+        return android_lines(config, console)
+    return spoken_lines(config, console)
+
+
+def android_lines(config: config_module.Config, console: Console) -> Iterator[str]:
+    """Android's own speech recognition, one utterance per invocation."""
+    from voicevibecoder.speech.android import utterances  # noqa: PLC0415
+
+    console.write("  listening through Termux:API. say 'help' for commands.", "dim")
+    return utterances(config, on_status=console.warn)
 
 
 def spoken_lines(config: config_module.Config, console: Console) -> Iterator[str]:

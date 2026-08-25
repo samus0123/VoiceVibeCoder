@@ -43,11 +43,11 @@ class Config:
     speech_ratio: float = 3.5
 
     # --- speech ----------------------------------------------------------
-    asr_backend: str = "auto"  # auto | whisper | text
+    asr_backend: str = "auto"  # auto | whisper | termux | text
     whisper_model: str = "base.en"
     whisper_compute_type: str = "int8"
     language: str = "en"
-    tts_backend: str = "auto"  # auto | pyttsx3 | say | espeak | off
+    tts_backend: str = "auto"  # auto | pyttsx3 | say | espeak | termux | off
 
     # --- behaviour -------------------------------------------------------
     wake_phrase: str | None = None  # e.g. "hey vibe"; None = always listening
