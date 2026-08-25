@@ -60,6 +60,46 @@ directory restore, not an apology.
 
 ---
 
+## It has its own brain
+
+VoiceVibeCoder is not a front-end for one company's API. The model layer is one
+small protocol — *take a turn* and *answer in this schema* — and everything
+above it is ordinary software that does not care who is thinking.
+
+| Brain | What it is | Needs |
+| --- | --- | --- |
+| `claude` | Claude, streaming, with adaptive thinking and cached prompts | an API key |
+| `local` | a model on this machine via [Ollama](https://ollama.com) | no key, no network |
+| `auto` | Claude when credentials exist, local when they do not | whichever is there |
+
+```bash
+ollama pull qwen2.5-coder:7b
+voicevibe --brain local                       # entirely offline
+voicevibe --brain local --local-model llama3.1:8b
+voicevibe --local-url http://192.168.1.20:11434   # a model on another machine
+```
+
+The hard part is not the transport, it is that **small local models are bad at
+tool calling**. A 7B coder will describe the file it would write instead of
+calling `write_file`, and a brain that only understands tool calls comes back
+empty every time. So the local brain speaks both dialects: native tool calls
+when the model manages them, and otherwise a plain-prose convention —
+
+    FILE: main.py
+    ```python
+    print("hello")
+    ```
+
+— parsed out of the reply and handed upward *as tool calls anyway*, with the
+`SUMMARY:` line becoming what gets spoken. The build loop never learns which
+happened. That is what makes a small local model a first-class citizen here
+rather than a degraded mode.
+
+The transport is `urllib` from the standard library: a program whose selling
+point is working offline should not need a package index to start.
+
+---
+
 ## Install
 
 ```bash
@@ -119,6 +159,19 @@ stop talking, hands over the text, and listens again. Responses are spoken
 through `termux-tts-speak`. A silent session is ignored; three failed sessions
 in a row stop with a setup hint rather than spinning on a missing permission.
 
+**On Android 14 and 15**, three settings decide whether a session survives more
+than a minute. Android's phantom-process killer reaps long-running child
+processes, which is exactly what a Python session and a model server are:
+
+1. Settings → Developer options → **Disable child process restrictions**
+2. Settings → Apps → Termux → Battery → **Unrestricted**
+3. Pull down the Termux notification → **Acquire wakelock** (survives screen-off)
+
+Android 15 refuses to install apps targeting API < 24; the F-Droid Termux build
+targets 28, so it installs normally. Grant the microphone permission when the
+first `termux-speech-to-text` prompts for it — pick "While using the app"
+rather than "Only this time", or you will re-grant it every session.
+
 Two honest caveats. **Recognition may not be local** — `termux-speech-to-text`
 uses Android's recognition service, usually Google's, which sends audio to the
 cloud unless you have installed offline recognition for your language. The
@@ -126,6 +179,16 @@ desktop path keeps dictated code on the machine; this one does not. And **the
 `anthropic` install pulls `pydantic-core`**, which is Rust: if there is no
 prebuilt wheel for your Termux target, `pkg install rust` first and expect a
 long build.
+
+**Fully off the cloud on a phone:** point the local brain at a model server on
+your desktop and nothing leaves your LAN except over your own wire.
+
+```bash
+voicevibe --brain local --local-url http://192.168.1.20:11434
+```
+
+A phone can also host the model itself, but a handset realistically tops out
+around a 1–3B model — usable for small edits, slow for a whole program.
 
 **The alternative that needs nothing:** run the session on a real machine and
 use the phone as a voice front-end over SSH.
@@ -270,7 +333,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 151 tests, no microphone or API key required
+pytest                       # 175 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 
@@ -290,7 +353,7 @@ voicevibecoder/
   audio/             capture + endpointing
   speech/            transcription in, speech out, Android via Termux:API
   intent/            NLP pipeline + command grammar + spoken paths
-  codegen/           prompts, tools, the Claude loop, the idea bar
+  codegen/           the brain protocol, Claude + local brains, the idea bar
   workspace/         containment, snapshots, runner, git
 ```
 

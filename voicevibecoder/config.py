@@ -23,11 +23,17 @@ class Config:
     # --- workspace -------------------------------------------------------
     workspace: Path = Path("./vibe-workspace")
 
-    # --- model -----------------------------------------------------------
+    # --- brain -----------------------------------------------------------
+    brain: str = "auto"  # auto | claude | local
     model: str = "claude-opus-5"
     effort: str = "high"  # low | medium | high | xhigh | max
     max_tokens: int = 32000
     server_side_fallback: bool = True  # rescue a policy refusal on the API side
+
+    # --- local brain (Ollama-compatible, no key and no network) ----------
+    local_model: str = "qwen2.5-coder:7b"
+    local_url: str = "http://localhost:11434"
+    local_timeout_s: float = 300.0
 
     # --- audio capture ---------------------------------------------------
     sample_rate: int = 16000

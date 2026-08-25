@@ -2,8 +2,14 @@
 # in the environment, and command line flags beat both.
 
 [voicevibe]
-model = "claude-opus-5"
+brain = "auto"             # auto | claude | local
+model = "claude-opus-5"    # used by the claude brain
 effort = "high"            # low | medium | high | xhigh | max
+
+# The local brain: no API key, no network.
+local_model = "qwen2.5-coder:7b"
+local_url = "http://localhost:11434"
+local_timeout_s = 300
 
 # Listening
 whisper_model = "base.en"  # tiny.en is faster; small.en hears better

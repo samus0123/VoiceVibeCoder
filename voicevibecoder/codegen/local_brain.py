@@ -1,0 +1,360 @@
+"""The local brain: a model running on this machine, no API key, no network.
+
+Talks to an [Ollama](https://ollama.com) server over its native HTTP API using
+nothing but the standard library — a program whose selling point is that it
+works offline should not need a package index to start.
+
+The interesting problem is that small local models are *bad at tool calling*.
+A 7B coder will happily describe the file it would write instead of calling
+``write_file``, and a brain that only understands tool calls would come back
+empty every time. So this one accepts both dialects: native tool calls when the
+model manages them, and otherwise a plain-prose convention —
+
+    FILE: main.py
+    ```python
+    print("hello")
+    ```
+
+— parsed out of the reply and *returned as tool calls anyway*. The generator
+above never learns which happened. That is what makes a small local model a
+first-class citizen here rather than a degraded mode.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import urllib.error
+import urllib.request
+from collections.abc import Callable, Sequence
+from typing import Any
+
+from voicevibecoder.codegen.brain import Reply, ToolCall, ToolResult
+from voicevibecoder.config import Config
+
+# Appended to the system prompt so a model with no tool support still knows
+# how to hand back files.
+BLOCK_PROTOCOL = """\
+
+If you cannot call tools, write files in prose instead, exactly like this: a \
+line reading `FILE: <path>` immediately followed by a fenced code block with \
+the file's complete contents. Repeat for each file. Then a final line reading \
+`SUMMARY: <one sentence>`. Never write a code block without a FILE: line above \
+it, and never abbreviate a file with "... rest unchanged" — always the whole \
+file.
+"""
+
+RUNNABLE = (".py", ".js", ".sh", ".rb", ".go", ".mjs")
+
+_FENCE = re.compile(
+    r"^[ \t]*(?P<fence>```+|~~~+)[ \t]*(?P<info>[^\n]*)\n(?P<body>.*?)^[ \t]*(?P=fence)[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
+_FILE_MARKER = re.compile(r"(?:^|\n)[ \t>*#-]*FILE:[ \t]*[`\"']?(?P<path>[\w./\-]+)", re.IGNORECASE)
+_SUMMARY_MARKER = re.compile(r"(?:^|\n)[ \t>*#-]*SUMMARY:[ \t]*(?P<summary>[^\n]+)", re.IGNORECASE)
+_PATHISH = re.compile(r"^(?:path|file|title|name)?=?[`\"']?(?P<path>[\w\-./]+\.[\w]{1,6})[`\"']?$")
+
+
+class LocalBrain:
+    name = "local"
+
+    def __init__(
+        self,
+        config: Config,
+        on_text: Callable[[str], None] | None = None,
+        request: Callable[..., Any] | None = None,
+    ) -> None:
+        self.config = config
+        self._on_text = on_text or (lambda _chunk: None)
+        self._request = request or self._http
+        self._history: list[dict[str, Any]] = []
+        self._call_counter = 0
+
+    # -- availability ----------------------------------------------------
+    def available(self) -> bool:
+        return self.installed_models() is not None
+
+    def installed_models(self) -> list[str] | None:
+        """Models the server has pulled, or None if it cannot be reached."""
+        try:
+            payload = self._request(f"{self.base_url}/api/tags", None, timeout=5)
+        except (OSError, ValueError):
+            return None
+        if isinstance(payload, list):  # a streaming stub handed back chunks
+            payload = payload[-1] if payload else {}
+        return [model.get("name", "") for model in payload.get("models", [])]
+
+    def require(self) -> None:
+        if not self.available():
+            raise RuntimeError(self.setup_help())
+
+    def setup_help(self) -> str:
+        models = self.installed_models()
+        if models is None:
+            return (
+                f"no local model server at {self.base_url}.\n"
+                "  1. install Ollama from https://ollama.com\n"
+                f"  2. ollama pull {self.config.local_model}\n"
+                "  3. ollama serve   (it usually runs already)"
+            )
+        if not _has_model(models, self.config.local_model):
+            return (
+                f"{self.config.local_model} is not pulled yet — "
+                f"ollama pull {self.config.local_model}\n"
+                f"  installed: {', '.join(models) or 'nothing yet'}"
+            )
+        return "ready"
+
+    @property
+    def base_url(self) -> str:
+        return self.config.local_url.rstrip("/")
+
+    # -- Brain -----------------------------------------------------------
+    def reset(self) -> None:
+        self._history = []
+
+    def turn(
+        self,
+        system: str,
+        user_text: str | None,
+        tool_results: Sequence[ToolResult],
+        tools: list[dict[str, Any]],
+    ) -> Reply:
+        if user_text is not None:
+            self._history.append({"role": "user", "content": user_text})
+        for result in tool_results:
+            self._history.append(
+                {
+                    "role": "tool",
+                    "tool_name": result.name,
+                    "content": ("ERROR: " if result.is_error else "") + result.content,
+                }
+            )
+
+        message = self._chat(
+            system + BLOCK_PROTOCOL,
+            self._history,
+            tools=[_as_function(tool) for tool in tools],
+        )
+        self._history.append(
+            {
+                "role": "assistant",
+                "content": message.get("content", ""),
+                **(
+                    {"tool_calls": message["tool_calls"]}
+                    if message.get("tool_calls")
+                    else {}
+                ),
+            }
+        )
+        self._trim()
+
+        text = (message.get("content") or "").strip()
+        calls = [self._native_call(raw) for raw in message.get("tool_calls") or []]
+        if not calls:
+            calls = self._calls_from_prose(text)
+        return Reply(text=text, tool_calls=tuple(calls))
+
+    def structured(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
+        message = self._chat(
+            system,
+            [{"role": "user", "content": prompt}],
+            schema=schema,
+            stream=False,
+        )
+        return extract_json(message.get("content", ""))
+
+    # -- prose dialect ---------------------------------------------------
+    def _calls_from_prose(self, text: str) -> list[ToolCall]:
+        """Turn `FILE:` blocks into the tool calls the model did not make."""
+        files = parse_file_blocks(text)
+        if not files:
+            return []
+
+        calls = [
+            self._call("write_file", {"path": path, "content": content})
+            for path, content in files
+        ]
+        entrypoint = next(
+            (path for path, _ in files if path.endswith(RUNNABLE)), ""
+        )
+        calls.append(
+            self._call(
+                "finish",
+                {
+                    "summary": spoken_summary(text, [path for path, _ in files]),
+                    "entrypoint": entrypoint,
+                },
+            )
+        )
+        return calls
+
+    def _native_call(self, raw: dict[str, Any]) -> ToolCall:
+        function = raw.get("function", raw)
+        arguments = function.get("arguments", {})
+        if isinstance(arguments, str):  # some builds emit a JSON string
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = {}
+        return self._call(function.get("name", ""), dict(arguments))
+
+    def _call(self, name: str, arguments: dict[str, Any]) -> ToolCall:
+        self._call_counter += 1
+        return ToolCall(id=f"local_{self._call_counter}", name=name, arguments=arguments)
+
+    # -- transport -------------------------------------------------------
+    def _chat(
+        self,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        schema: dict[str, Any] | None = None,
+        stream: bool = True,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.config.local_model,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "stream": stream,
+            # Low but not zero: deterministic enough to follow the protocol,
+            # loose enough to not loop on a phrase.
+            "options": {"temperature": 0.2},
+        }
+        if tools:
+            body["tools"] = tools
+        if schema:
+            body["format"] = schema
+
+        try:
+            payload = self._request(
+                f"{self.base_url}/api/chat", body, timeout=self.config.local_timeout_s
+            )
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"local model unreachable: {self.setup_help()}") from exc
+        except OSError as exc:
+            raise RuntimeError(f"local model failed: {exc}") from exc
+
+        return self._collect(payload)
+
+    def _collect(self, payload: Any) -> dict[str, Any]:
+        """Fold a streamed response (or a single one) into one message."""
+        chunks = payload if isinstance(payload, list) else [payload]
+        content: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        for chunk in chunks:
+            message = chunk.get("message") or {}
+            piece = message.get("content") or ""
+            if piece:
+                content.append(piece)
+                self._on_text(piece)
+            tool_calls.extend(message.get("tool_calls") or [])
+        return {"content": "".join(content), "tool_calls": tool_calls}
+
+    def _http(self, url: str, body: Any, timeout: float) -> Any:
+        """POST JSON (or GET when body is None); returns dict or NDJSON list."""
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(  # noqa: S310 — http(s) URL from config
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST" if data else "GET",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", "replace")
+        lines = [line for line in raw.splitlines() if line.strip()]
+        if len(lines) == 1:
+            return json.loads(lines[0])
+        return [json.loads(line) for line in lines]
+
+    def _trim(self) -> None:
+        limit = max(2, self.config.history_turns * 2)
+        trimmed = self._history[-limit:]
+        while trimmed and trimmed[0].get("role") == "tool":
+            trimmed = trimmed[1:]  # a tool result with no call above it
+        self._history = trimmed
+
+
+# ---------------------------------------------------------------------------
+# Parsing the prose dialect
+# ---------------------------------------------------------------------------
+def parse_file_blocks(text: str) -> list[tuple[str, str]]:
+    """Extract ``(path, content)`` pairs from a reply written as prose.
+
+    A path comes from a ``FILE:`` line just above the fence, or from the
+    fence's info string (```` ```python main.py ````). A fenced block with no
+    path is ignored — a nameless file is not a file.
+    """
+    files: list[tuple[str, str]] = []
+    for match in _FENCE.finditer(text):
+        path = _path_before(text, match.start()) or _path_from_info(match.group("info"))
+        if not path:
+            continue
+        body = match.group("body")
+        if body.endswith("\n\n"):
+            body = body[:-1]
+        files.append((path, body))
+    return files
+
+
+def _path_before(text: str, fence_start: int) -> str:
+    """The nearest FILE: marker in the few lines above a fence."""
+    window = text[max(0, fence_start - 400) : fence_start]
+    markers = list(_FILE_MARKER.finditer(window))
+    if not markers:
+        return ""
+    # Only if nothing but blank space and the marker line separate them.
+    tail = window[markers[-1].end() :]
+    return markers[-1].group("path") if tail.strip(" \t\r\n`\"'") == "" else ""
+
+
+def _path_from_info(info: str) -> str:
+    for token in info.replace(":", " ").split():
+        candidate = _PATHISH.match(token)
+        if candidate:
+            return candidate.group("path")
+    return ""
+
+
+def spoken_summary(text: str, paths: list[str]) -> str:
+    """The sentence to say aloud, from a SUMMARY: line or the surrounding prose."""
+    marked = _SUMMARY_MARKER.search(text)
+    if marked:
+        return marked.group("summary").strip()
+    prose = _FENCE.sub(" ", text)
+    prose = _FILE_MARKER.sub(" ", prose)
+    sentences = [line.strip() for line in prose.split(".") if len(line.strip()) > 15]
+    if sentences:
+        return sentences[0].strip() + "."
+    return f"Wrote {', '.join(paths)}." if paths else "Nothing changed."
+
+
+def extract_json(text: str) -> str:
+    """Pull the first JSON object out of a reply that may be wrapped in prose."""
+    text = (text or "").strip()
+    if text.startswith("{"):
+        return text
+    for match in _FENCE.finditer(text):
+        body = match.group("body").strip()
+        if body.startswith("{"):
+            return body
+    start = text.find("{")
+    end = text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else ""
+
+
+def _as_function(tool: dict[str, Any]) -> dict[str, Any]:
+    """Anthropic-shaped tool definition -> the function-calling shape."""
+    return {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+            "parameters": tool.get("input_schema", {}),
+        },
+    }
+
+
+def _has_model(models: list[str], wanted: str) -> bool:
+    # "qwen2.5-coder:7b" should match an installed "qwen2.5-coder:7b" exactly,
+    # and a bare "qwen2.5-coder" should match its default tag.
+    return any(name == wanted or name.split(":")[0] == wanted for name in models)

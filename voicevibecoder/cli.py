@@ -40,7 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--text", action="store_true", help="read typed lines instead of listening"
     )
+    parser.add_argument(
+        "--brain",
+        choices=("auto", "claude", "local"),
+        help="which model does the thinking (default: auto)",
+    )
     parser.add_argument("--model", help="Claude model id (default: claude-opus-5)")
+    parser.add_argument(
+        "--local-model", help="local model name (default: qwen2.5-coder:7b)"
+    )
+    parser.add_argument(
+        "--local-url", help="local model server (default: http://localhost:11434)"
+    )
     parser.add_argument(
         "--effort",
         choices=("low", "medium", "high", "xhigh", "max"),
@@ -87,7 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def config_from_args(args: argparse.Namespace) -> config_module.Config:
     overrides: dict[str, object] = {
+        "brain": args.brain,
         "model": args.model,
+        "local_model": args.local_model,
+        "local_url": args.local_url,
         "effort": args.effort,
         "wake_phrase": args.wake,
         "input_device": args.device,
@@ -127,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
     except RuntimeError as exc:
         console.error(str(exc))
         return 2
+    except ValueError as exc:
+        console.error(str(exc))
+        return 2
 
     speaker = NullSpeaker() if args.quiet else build_speaker(config)
     session = Session(
@@ -142,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
 
     console.banner()
     console.write(f"  workspace: {workspace.root}", "dim")
+    console.write(f"  brain: {_brain_label(generator, config)}", "dim")
 
     if args.say:
         session.handle(args.say)  # a one-shot needs no greeting
@@ -159,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
         console.write("")
         console.vibe("Stopped listening.")
     return 0
+
+
+def _brain_label(generator: CodeGenerator, config: config_module.Config) -> str:
+    if generator.brain_name == "local":
+        return f"{config.local_model} (local, offline)"
+    return config.model
 
 
 def typed_lines(console: Console) -> Iterator[str]:

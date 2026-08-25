@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from voicevibecoder.codegen.claude_brain import ClaudeBrain
 from voicevibecoder.codegen.generator import CodeGenerator
 
 
@@ -87,7 +88,7 @@ def test_a_build_writes_files_and_returns_the_spoken_summary(
     config, workspace, build_responses
 ):
     client = StubClient(build_responses)
-    result = CodeGenerator(config, client=client).build("make a thing", workspace)
+    result = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).build("make a thing", workspace)
 
     assert workspace.read("main.py") == "print(1)\n"
     assert result.summary == "Wrote main.py, which prints one."
@@ -99,7 +100,7 @@ def test_the_request_carries_the_current_model_and_effort(
     config, workspace, build_responses
 ):
     client = StubClient(build_responses)
-    CodeGenerator(config.merged(effort="max"), client=client).build("x", workspace)
+    CodeGenerator(config, brain=ClaudeBrain(config.merged(effort="max"), client=client)).build("x", workspace)
 
     first = client.messages.calls[0]
     assert first["model"] == "claude-opus-5"
@@ -112,7 +113,7 @@ def test_an_sdk_without_server_side_fallbacks_degrades_quietly(
     config, workspace, build_responses
 ):
     client = StubClient(build_responses, reject_beta_kwargs=True)
-    result = CodeGenerator(config, client=client).build("make a thing", workspace)
+    result = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).build("make a thing", workspace)
 
     assert result.summary  # it still completed
     assert all("fallbacks" not in call for call in client.messages.calls)
@@ -120,7 +121,7 @@ def test_an_sdk_without_server_side_fallbacks_degrades_quietly(
 
 def test_a_refusal_is_reported_rather_than_raised(config, workspace):
     client = StubClient([message(text_block(""), stop_reason="refusal")])
-    result = CodeGenerator(config, client=client).build("...", workspace)
+    result = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).build("...", workspace)
 
     assert result.refused
     assert not result.changed_files
@@ -137,7 +138,7 @@ def test_a_tool_error_is_returned_to_the_model_not_raised(config, workspace):
             ),
         ]
     )
-    result = CodeGenerator(config, client=client).build("escape", workspace)
+    result = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).build("escape", workspace)
 
     # The conversation carries the failure back as a tool result, not an
     # exception, so the model gets a chance to correct the path.
@@ -162,7 +163,7 @@ def test_follow_ups_keep_the_earlier_conversation(config, workspace, build_respo
             )
         ]
     )
-    generator = CodeGenerator(config, client=client)
+    generator = CodeGenerator(config, brain=ClaudeBrain(config, client=client))
     generator.build("make a thing", workspace)
     generator.build("now add colour", workspace)
 
@@ -175,7 +176,7 @@ def test_reset_forgets_the_conversation(config, workspace, build_responses):
         build_responses
         + [message(tool_block("finish", {"summary": "New.", "entrypoint": ""}, "c3"))]
     )
-    generator = CodeGenerator(config, client=client)
+    generator = CodeGenerator(config, brain=ClaudeBrain(config, client=client))
     generator.build("make a thing", workspace)
     generator.reset()
     generator.build("something else", workspace)
@@ -187,7 +188,7 @@ def test_reset_forgets_the_conversation(config, workspace, build_responses):
 def test_explain_is_given_only_read_only_tools(config, workspace):
     workspace.write("main.py", "print(1)\n")
     client = StubClient([message(text_block("It prints one."), stop_reason="end_turn")])
-    answer = CodeGenerator(config, client=client).explain("what does it do", workspace)
+    answer = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).explain("what does it do", workspace)
 
     tools = {tool["name"] for tool in client.messages.calls[0]["tools"]}
     assert tools == {"read_file", "list_files"}
@@ -198,7 +199,7 @@ def test_a_finish_naming_a_missing_entrypoint_is_ignored(config, workspace):
     client = StubClient(
         [message(tool_block("finish", {"summary": "Done.", "entrypoint": "ghost.py"}))]
     )
-    result = CodeGenerator(config, client=client).build("x", workspace)
+    result = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).build("x", workspace)
     assert result.entrypoint == ""
 
 
@@ -224,7 +225,7 @@ def test_ideation_uses_structured_output_and_the_local_bar(config, workspace):
         }
     )
     client = StubClient([message(text_block(payload), stop_reason="end_turn")])
-    ideas = CodeGenerator(config, client=client).ideate("numbers", workspace)
+    ideas = CodeGenerator(config, brain=ClaudeBrain(config, client=client)).ideate("numbers", workspace)
 
     assert [idea.name for idea in ideas] == ["Drift Detector"]
     schema = client.messages.calls[0]["output_config"]["format"]
@@ -234,7 +235,7 @@ def test_ideation_uses_structured_output_and_the_local_bar(config, workspace):
 def test_improvements_are_given_the_code_that_exists(config, workspace):
     workspace.write("main.py", "print('unique-marker')\n")
     client = StubClient([message(text_block('{"ideas": []}'), stop_reason="end_turn")])
-    CodeGenerator(config, client=client).suggest_improvements("a printer", workspace)
+    CodeGenerator(config, brain=ClaudeBrain(config, client=client)).suggest_improvements("a printer", workspace)
 
     request = client.messages.calls[0]["messages"][0]["content"]
     assert "unique-marker" in request
