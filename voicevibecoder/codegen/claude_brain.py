@@ -165,9 +165,7 @@ def _make_client() -> Any:
     try:
         import anthropic  # noqa: PLC0415 — optional until a build is requested
     except ImportError as exc:
-        raise RuntimeError(
-            "the Anthropic SDK is not installed (pip install anthropic)"
-        ) from exc
+        raise RuntimeError(_sdk_missing_help()) from exc
     try:
         client = anthropic.Anthropic()
     except Exception as exc:  # noqa: BLE001 — surface auth setup, not a stack trace
@@ -184,6 +182,24 @@ def _make_client() -> Any:
             "no credentials (set ANTHROPIC_API_KEY or run 'ant auth login')"
         )
     return client
+
+
+def _sdk_missing_help() -> str:
+    """Say how to get it — and on Android, say what it will cost you.
+
+    `pip install anthropic` on a phone compiles pydantic-core from source: it
+    needs a Rust toolchain, takes the better part of an hour, and holds the
+    terminal the whole time looking like a hang. Someone who has a local model
+    a command away should hear that before starting it.
+    """
+    if "com.termux" in os.environ.get("PREFIX", "") or os.environ.get("TERMUX_VERSION"):
+        return (
+            "the Anthropic SDK is not installed, and on Android installing it "
+            "compiles pydantic-core from source — 'pkg install rust binutils' "
+            "first, then a long wait.\n"
+            "  The local brain needs none of that:  ./setup-llama"
+        )
+    return "the Anthropic SDK is not installed (pip install anthropic)"
 
 
 def _credentials_present(client: Any) -> bool:

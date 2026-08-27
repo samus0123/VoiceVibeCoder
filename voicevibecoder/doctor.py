@@ -75,7 +75,12 @@ def _brains(config: Config) -> list[tuple[str, str]]:
         except Exception as exc:  # noqa: BLE001 — this is the diagnosis
             rows.append((config.model, f"{MISSING}  {_short(exc)}"))
     else:
-        rows.append((config.model, f"{MISSING}  pip install -e '.[claude]'"))
+        hint = (
+            "needs a Rust build on Android — prefer ./setup-llama"
+            if _is_termux()
+            else "pip install -e '.[claude]'"
+        )
+        rows.append((config.model, f"{MISSING}  {hint}"))
 
     from voicevibecoder.codegen.local_brain import LocalBrain  # noqa: PLC0415
 

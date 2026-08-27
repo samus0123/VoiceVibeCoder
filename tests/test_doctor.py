@@ -72,3 +72,22 @@ def test_the_session_survives_a_build_with_no_brain(config, workspace, speaker):
     assert session.handle("make me a snake game") is True  # reports, does not crash
     assert "brain" in " ".join(speaker.said).lower()
     assert session.handle("quit") is False
+
+
+def test_android_is_warned_off_the_rust_build(monkeypatch):
+    from voicevibecoder.codegen import claude_brain
+
+    monkeypatch.setenv("TERMUX_VERSION", "0.118.0")
+    message = claude_brain._sdk_missing_help()
+    assert "rust" in message.lower()
+    assert "setup-llama" in message
+
+
+def test_elsewhere_the_hint_stays_simple(monkeypatch):
+    from voicevibecoder.codegen import claude_brain
+
+    monkeypatch.delenv("TERMUX_VERSION", raising=False)
+    monkeypatch.setenv("PREFIX", "/usr")
+    assert claude_brain._sdk_missing_help() == (
+        "the Anthropic SDK is not installed (pip install anthropic)"
+    )

@@ -197,15 +197,19 @@ through Termux:API rather than PortAudio, and the local brain speaks HTTP from
 the standard library, so neither numpy nor a Rust toolchain is involved.
 `--android` is implied inside Termux.
 
-To use Claude from the phone instead, add the extra — budget time for it, since
-`pydantic-core` has no Termux wheel and builds from source:
+To use Claude from the phone instead, add the extra. **Budget an hour**:
+`pydantic-core` has no Termux wheel, so it compiles from source, and without a
+Rust toolchain it fails after a long silence that looks exactly like a hang.
 
 ```bash
-pkg install rust binutils
-pip install -e '.[claude]'
+pkg install rust binutils     # not optional — the build needs it
+pip install -e '.[claude]'    # long. It holds the terminal; ctrl-c is safe.
 export ANTHROPIC_API_KEY=...
 voicevibe
 ```
+
+If you just want a working brain on the phone, `./setup-llama` gets there in
+one command with nothing to compile.
 
 Listening is one Android recognition session per utterance: it blocks until you
 stop talking, hands over the text, and listens again. Responses are spoken
@@ -426,7 +430,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 198 tests, no microphone or API key required
+pytest                       # 200 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 
