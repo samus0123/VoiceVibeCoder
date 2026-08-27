@@ -71,11 +71,31 @@ class CodeGenerator:
         on_text: Callable[[str], None] | None = None,
     ) -> None:
         self.config = config
-        self.brain = brain or build_brain(config, on_text=on_text)
+        self._brain = brain
+        self._on_text = on_text
+
+    @property
+    def brain(self) -> Brain:
+        """The brain, connected on first use.
+
+        Deliberately lazy: a session with no model reachable should still
+        *start*. Listing files, reading them back, running a program, undoing,
+        dictating and quitting need no model at all, and a program that refuses
+        to open because a server is down is a worse program than one that says
+        so when you finally ask it to build something.
+        """
+        if self._brain is None:
+            self._brain = build_brain(self.config, on_text=self._on_text)
+        return self._brain
 
     @property
     def brain_name(self) -> str:
-        return getattr(self.brain, "name", "unknown")
+        """What is connected, without connecting anything to find out."""
+        return getattr(self._brain, "name", "not connected yet")
+
+    @property
+    def connected(self) -> bool:
+        return self._brain is not None
 
     # -- public API ------------------------------------------------------
     def reset(self) -> None:

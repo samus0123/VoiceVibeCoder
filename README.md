@@ -235,6 +235,22 @@ Recognition happens on the phone, the build happens where your toolchain is,
 and nothing about the pipeline changes — `--text` is the same path speech
 takes, minus the microphone.
 
+### When something is not working
+
+```bash
+./voicevibe --doctor
+```
+
+One command, every way the setup can be half-finished: Python version, which
+packages are present, whether either brain is reachable, how listening will
+happen, and whether the workspace is writable — ending in a verdict that says
+what to do next.
+
+The session itself starts whether or not a brain is reachable. Listing files,
+reading them back, running a program, undoing, dictating and quitting need no
+model at all; only building does, and if nothing is reachable it says so when
+you ask rather than refusing to open.
+
 ### What you can say
 
 Everything not in this table is a specification: describe the program you want,
@@ -366,7 +382,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 175 tests, no microphone or API key required
+pytest                       # 181 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 

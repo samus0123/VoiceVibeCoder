@@ -62,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list-devices", action="store_true", help="show input devices and exit"
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="report what is and is not working, then exit",
+    )
     parser.add_argument("--whisper-model", help="faster-whisper model (default: base.en)")
     parser.add_argument(
         "--android",
@@ -134,16 +139,18 @@ def main(argv: list[str] | None = None) -> int:
 
     config = config_from_args(args)
     console = Console(color=not args.no_color)
+
+    if args.doctor:
+        from voicevibecoder.doctor import report  # noqa: PLC0415
+
+        print(report(config))
+        return 0
+
     workspace = Workspace(config.workspace)
 
-    try:
-        generator = CodeGenerator(config, on_text=console.chunk)
-    except RuntimeError as exc:
-        console.error(str(exc))
-        return 2
-    except ValueError as exc:
-        console.error(str(exc))
-        return 2
+    # Constructing this connects to nothing; the brain is dialled on the first
+    # build, so a missing model server cannot stop the session from opening.
+    generator = CodeGenerator(config, on_text=console.chunk)
 
     speaker = NullSpeaker() if args.quiet else build_speaker(config)
     session = Session(
@@ -159,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
 
     console.banner()
     console.write(f"  workspace: {workspace.root}", "dim")
-    console.write(f"  brain: {_brain_label(generator, config)}", "dim")
+    console.write(f"  brain: {_brain_label(config)}", "dim")
 
     if args.say:
         session.handle(args.say)  # a one-shot needs no greeting
@@ -179,10 +186,12 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _brain_label(generator: CodeGenerator, config: config_module.Config) -> str:
-    if generator.brain_name == "local":
+def _brain_label(config: config_module.Config) -> str:
+    if config.brain == "local":
         return f"{config.local_model} (local, offline)"
-    return config.model
+    if config.brain == "claude":
+        return config.model
+    return f"auto — {config.model} if a key is set, else {config.local_model}"
 
 
 def typed_lines(console: Console) -> Iterator[str]:

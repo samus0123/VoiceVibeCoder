@@ -8,7 +8,9 @@ none of it — only :class:`~voicevibecoder.codegen.brain.Reply`.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 from voicevibecoder.codegen.brain import Reply, ToolCall, ToolResult
@@ -167,8 +169,40 @@ def _make_client() -> Any:
             "the Anthropic SDK is not installed (pip install anthropic)"
         ) from exc
     try:
-        return anthropic.Anthropic()
+        client = anthropic.Anthropic()
     except Exception as exc:  # noqa: BLE001 — surface auth setup, not a stack trace
         raise RuntimeError(
             f"no credentials (set ANTHROPIC_API_KEY or run 'ant auth login') — {exc}"
         ) from exc
+
+    # The SDK resolves credentials lazily, so constructing a client proves
+    # nothing — without this check an auto-selected Claude brain would be
+    # chosen happily and then fail on the first request, instead of falling
+    # back to a local model that is right there and working.
+    if not _credentials_present(client):
+        raise RuntimeError(
+            "no credentials (set ANTHROPIC_API_KEY or run 'ant auth login')"
+        )
+    return client
+
+
+def _credentials_present(client: Any) -> bool:
+    """Whether *some* documented credential source is configured.
+
+    Deliberately not a network call: this runs at startup. An unset
+    ANTHROPIC_API_KEY does not mean there are no credentials — a stored
+    profile or workload identity federation counts too.
+    """
+    if getattr(client, "api_key", None) or getattr(client, "auth_token", None):
+        return True
+    if any(
+        os.environ.get(name)
+        for name in (
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_PROFILE",
+            "ANTHROPIC_IDENTITY_TOKEN",
+            "ANTHROPIC_IDENTITY_TOKEN_FILE",
+        )
+    ):
+        return True
+    return (Path.home() / ".config" / "anthropic").exists()
