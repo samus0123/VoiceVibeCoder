@@ -132,3 +132,65 @@ def test_the_brain_does_not_wait_twice(config):
     assert brain.installed_models() is None
     assert brain.installed_models() is None
     assert len(waits) == 1  # a server that never came up is not waited for again
+
+
+def test_warming_sends_the_system_prompt_and_asks_for_one_token(config):
+    """Loading the weights is half the wait; the prompt is the other half."""
+    from voicevibecoder.codegen.local_brain import LocalBrain
+
+    sent = []
+
+    def server(url, body, timeout=None):
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "llama-3.2-1b"}]}
+        sent.append(body)
+        return {"message": {"content": "ready"}}
+
+    brain = LocalBrain(config, request=server)
+    assert brain.warm("SYSTEM PROMPT TEXT") is True
+
+    body = sent[0]
+    assert body["messages"][0]["content"] == "SYSTEM PROMPT TEXT"
+    assert body["options"]["num_predict"] == 1  # one token, not a paragraph
+    assert not body.get("tools")
+
+
+def test_warming_an_openai_server_caps_max_tokens(config):
+    from voicevibecoder.codegen.local_brain import LocalBrain
+
+    sent = []
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        sent.append(body)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    assert brain.warm("SYSTEM") is True
+    assert sent[0]["max_tokens"] == 1
+
+
+def test_warming_leaves_the_conversation_untouched(config):
+    """A warm-up is not a turn; the first real instruction must start clean."""
+    from voicevibecoder.codegen.local_brain import LocalBrain
+
+    def server(url, body, timeout=None):
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "m"}]}
+        return {"message": {"content": "ready"}}
+
+    brain = LocalBrain(config, request=server)
+    brain.warm("SYSTEM")
+    assert brain._history == []
+
+
+def test_a_failed_warm_up_is_harmless(config):
+    from voicevibecoder.codegen.local_brain import LocalBrain
+
+    def server(url, body, timeout=None):
+        if url.endswith("/api/tags"):
+            return {"models": [{"name": "m"}]}
+        raise OSError("server busy loading")
+
+    assert LocalBrain(config, request=server).warm("SYSTEM") is False

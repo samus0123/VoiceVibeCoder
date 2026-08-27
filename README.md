@@ -245,14 +245,24 @@ desktop path keeps dictated code on the machine; this one does not. And **the
 prebuilt wheel for your Termux target, `pkg install rust` first and expect a
 long build.
 
-**The model loads while you type.** At launch the program starts a local model
-server itself — finds `llama-server`, finds the largest `.gguf` you have, and
-puts it in the background — then goes straight to the prompt. Loading a
-multi-gigabyte model is unavoidably slow, but it overlaps with reading the
-greeting and typing the first instruction, which is time you were spending
-anyway. If the model is still loading when you finish typing, that first build
-waits for it once instead of failing. `--no-serve` turns it off; `--model-file`
-picks a specific one.
+**The model loads while you are still speaking.** At launch the program starts
+a local model server itself — finds `llama-server`, finds the largest `.gguf`
+you have, puts it in the background — and goes straight to the greeting.
+
+There are two waits hiding in a local model, and both are paid during the
+sentence you are in the middle of saying:
+
+1. **Loading the weights**, several gigabytes off a phone's storage.
+2. **Processing the system prompt**, a thousand tokens the first request would
+   otherwise have to chew through before generating anything.
+
+So once the server answers, a background thread pushes the real system prompt
+through it and asks for exactly one token. By the time you stop talking, the
+weights are resident and the prompt is in the server's cache, and the first
+thing you ask for starts generating immediately. If you finish speaking before
+the model finishes loading, that first build waits once instead of failing.
+
+`--no-serve` turns it off; `--model-file` picks a specific model.
 
 **A brain on the phone itself.** `llama.cpp` is packaged for Termux, so this
 needs no desktop and no network once the model file is down. One command does

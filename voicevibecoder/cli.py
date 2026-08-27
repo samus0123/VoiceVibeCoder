@@ -12,6 +12,7 @@ import argparse
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 from voicevibecoder import config as config_module
 from voicevibecoder.codegen.generator import CodeGenerator
@@ -218,12 +219,18 @@ def start_model_server(
     server = ModelServer.discover(config)
     if server is None:
         return None
-    if server.ready():
-        return None  # already answering; nothing to start or wait for
-    if not server.start():
-        return None  # the port is taken by something we did not launch
 
-    console.write(f"  loading {server.describe()} in the background", "dim")
+    already_up = server.ready()
+    if not already_up and not server.start():
+        return None  # the port is taken by something we did not launch
+    if not already_up:
+        console.write(f"  loading {server.describe()} in the background", "dim")
+
+    # Warm the prompt in the background too. Everything from here until the
+    # first instruction — the greeting, the wake word, a whole spoken sentence
+    # — is time the model can spend loading its weights and chewing through
+    # the system prompt, so that none of it is spent after you stop talking.
+    warm_in_background(config, server, console, announce=not already_up)
 
     def wait() -> bool:
         console.write("  ⋯  waiting for the model to finish loading", "dim")
@@ -236,6 +243,35 @@ def start_model_server(
         return ready
 
     return wait
+
+
+def warm_in_background(
+    config: config_module.Config,
+    server: Any,
+    console: Console,
+    announce: bool,
+) -> None:
+    """Load and prime the model on a side thread; never block the session."""
+    import threading  # noqa: PLC0415
+
+    def work() -> None:
+        from voicevibecoder.codegen import prompts  # noqa: PLC0415
+        from voicevibecoder.codegen.local_brain import (  # noqa: PLC0415
+            BLOCK_PROTOCOL,
+            LocalBrain,
+        )
+
+        if not server.wait(timeout_s=config.local_load_wait_s):
+            return  # the first build will report why
+        brain = LocalBrain(config)
+        if not brain.available():
+            return
+        warmed = brain.warm(prompts.SYSTEM_PROMPT + BLOCK_PROTOCOL)
+        if announce and warmed:
+            # A leading newline: this lands while a prompt is on screen.
+            console.write(f"\n  {server.describe()} ready", "dim")
+
+    threading.Thread(target=work, daemon=True, name="warm-model").start()
 
 
 def _brain_label(config: config_module.Config) -> str:

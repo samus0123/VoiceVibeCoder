@@ -280,6 +280,37 @@ class LocalBrain:
             calls = self._calls_from_prose(text)
         return Reply(text=text, tool_calls=tuple(calls))
 
+    def warm(self, system: str) -> bool:
+        """Push the system prompt through the model and ask for one token.
+
+        Loading the weights is only half the wait: the first real request still
+        has to process a thousand tokens of system prompt, which on a phone is
+        another half-minute. Doing it in advance leaves that work in the
+        server's cache, so the first thing the person actually asks for starts
+        generating immediately.
+        """
+        dialect = self.dialect
+        body = dialect.limit(
+            dialect.body(
+                self.effective_model,
+                system,
+                [{"role": "user", "content": "ready?"}],
+                None,
+                None,
+                False,
+            ),
+            1,
+        )
+        try:
+            self._request(
+                f"{self.base_url}{dialect.chat_path}",
+                body,
+                timeout=self.config.local_timeout_s,
+            )
+        except (OSError, ValueError):
+            return False
+        return True
+
     def structured(self, system: str, prompt: str, schema: dict[str, Any]) -> str:
         message = self._chat(
             system,
@@ -447,6 +478,11 @@ class OllamaDialect:
         return body
 
     @staticmethod
+    def limit(body, tokens):
+        body.setdefault("options", {})["num_predict"] = tokens
+        return body
+
+    @staticmethod
     def message_of(chunk):
         return chunk.get("message") or {}
 
@@ -485,6 +521,11 @@ class OpenAIDialect:
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True, "schema": schema},
             }
+        return body
+
+    @staticmethod
+    def limit(body, tokens):
+        body["max_tokens"] = tokens
         return body
 
     @staticmethod
