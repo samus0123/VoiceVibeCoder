@@ -1,7 +1,13 @@
 """The local brain: a model running on this machine, no API key, no network.
 
-Talks to an [Ollama](https://ollama.com) server over its native HTTP API using
-nothing but the standard library — a program whose selling point is that it
+Speaks to whatever local server is actually there. Two dialects cover nearly
+every one people run: Ollama's native API, and the OpenAI-compatible API that
+llama.cpp, LM Studio and vLLM serve. Which one is in front of it is *detected*
+rather than configured — whichever model-listing endpoint answers decides —
+because "install this specific server first" is a bad answer to "I just want to
+use the model I already have".
+
+Transport is the standard library: a program whose selling point is that it
 works offline should not need a package index to start.
 
 The interesting problem is that small local models are *bad at tool calling*.
@@ -69,20 +75,45 @@ class LocalBrain:
         self._request = request or self._http
         self._history: list[dict[str, Any]] = []
         self._call_counter = 0
+        self._dialect: Any = DIALECTS.get(config.local_api)  # None means "probe"
 
     # -- availability ----------------------------------------------------
     def available(self) -> bool:
         return self.installed_models() is not None
 
     def installed_models(self) -> list[str] | None:
-        """Models the server has pulled, or None if it cannot be reached."""
-        try:
-            payload = self._request(f"{self.base_url}/api/tags", None, timeout=5)
-        except (OSError, ValueError):
-            return None
-        if isinstance(payload, list):  # a streaming stub handed back chunks
-            payload = payload[-1] if payload else {}
-        return [model.get("name", "") for model in payload.get("models", [])]
+        """Models the server offers, or None if no server answers.
+
+        Doubles as dialect detection: whichever listing endpoint answers tells
+        us which API this server speaks, so a person can point at Ollama or at
+        llama.cpp without having to say which they are running.
+        """
+        candidates = (
+            [self._dialect] if self._dialect else [OllamaDialect, OpenAIDialect]
+        )
+        for dialect in candidates:
+            try:
+                payload = self._request(
+                    f"{self.base_url}{dialect.models_path}", None, timeout=5
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(payload, list):  # a stub handed back chunks
+                payload = payload[-1] if payload else {}
+            self._dialect = dialect
+            return dialect.models_of(payload)
+        return None
+
+    @property
+    def dialect(self) -> Any:
+        """The server's API flavour, probed once and remembered."""
+        if self._dialect is None:
+            self.installed_models()
+        return self._dialect or OllamaDialect
+
+    @property
+    def api_name(self) -> str:
+        return self.dialect.name
 
     def require(self) -> None:
         if not self.available():
@@ -93,9 +124,10 @@ class LocalBrain:
         if models is None:
             return (
                 f"no local model server at {self.base_url}.\n"
-                "  1. install Ollama from https://ollama.com\n"
-                f"  2. ollama pull {self.config.local_model}\n"
-                "  3. ollama serve   (it usually runs already)"
+                "  Ollama:     https://ollama.com  then  "
+                f"ollama pull {self.config.local_model}\n"
+                "  llama.cpp:  llama-server -m <model.gguf> --port 11434\n"
+                "  Either works — whichever answers is the one it talks to."
             )
         if not _has_model(models, self.config.local_model):
             return (
@@ -123,13 +155,7 @@ class LocalBrain:
         if user_text is not None:
             self._history.append({"role": "user", "content": user_text})
         for result in tool_results:
-            self._history.append(
-                {
-                    "role": "tool",
-                    "tool_name": result.name,
-                    "content": ("ERROR: " if result.is_error else "") + result.content,
-                }
-            )
+            self._history.append(self.dialect.tool_message(result))
 
         message = self._chat(
             system + BLOCK_PROTOCOL,
@@ -161,6 +187,8 @@ class LocalBrain:
             [{"role": "user", "content": prompt}],
             schema=schema,
             stream=False,
+            # A schema-shaped payload is data, not something to read out.
+            echo=False,
         )
         return extract_json(message.get("content", ""))
 
@@ -192,12 +220,16 @@ class LocalBrain:
     def _native_call(self, raw: dict[str, Any]) -> ToolCall:
         function = raw.get("function", raw)
         arguments = function.get("arguments", {})
-        if isinstance(arguments, str):  # some builds emit a JSON string
+        if isinstance(arguments, str):  # OpenAI-compatible servers send JSON text
             try:
                 arguments = json.loads(arguments)
             except ValueError:
                 arguments = {}
-        return self._call(function.get("name", ""), dict(arguments))
+        call = self._call(function.get("name", ""), dict(arguments))
+        # Keep the server's own id: OpenAI-compatible servers match the tool
+        # result back to the call by it.
+        server_id = raw.get("id")
+        return ToolCall(server_id, call.name, call.arguments) if server_id else call
 
     def _call(self, name: str, arguments: dict[str, Any]) -> ToolCall:
         self._call_counter += 1
@@ -211,43 +243,40 @@ class LocalBrain:
         tools: list[dict[str, Any]] | None = None,
         schema: dict[str, Any] | None = None,
         stream: bool = True,
+        echo: bool = True,
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "model": self.config.local_model,
-            "messages": [{"role": "system", "content": system}, *messages],
-            "stream": stream,
-            # Low but not zero: deterministic enough to follow the protocol,
-            # loose enough to not loop on a phrase.
-            "options": {"temperature": 0.2},
-        }
-        if tools:
-            body["tools"] = tools
-        if schema:
-            body["format"] = schema
+        dialect = self.dialect
+        body = dialect.body(
+            self.config.local_model, system, messages, tools, schema, stream
+        )
 
         try:
             payload = self._request(
-                f"{self.base_url}/api/chat", body, timeout=self.config.local_timeout_s
+                f"{self.base_url}{dialect.chat_path}",
+                body,
+                timeout=self.config.local_timeout_s,
             )
         except urllib.error.URLError as exc:
             raise RuntimeError(f"local model unreachable: {self.setup_help()}") from exc
         except OSError as exc:
             raise RuntimeError(f"local model failed: {exc}") from exc
 
-        return self._collect(payload)
+        return self._collect(payload, echo=echo)
 
-    def _collect(self, payload: Any) -> dict[str, Any]:
+    def _collect(self, payload: Any, echo: bool = True) -> dict[str, Any]:
         """Fold a streamed response (or a single one) into one message."""
         chunks = payload if isinstance(payload, list) else [payload]
+        message_of = self.dialect.message_of
         content: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         for chunk in chunks:
-            message = chunk.get("message") or {}
+            message = message_of(chunk)
             piece = message.get("content") or ""
             if piece:
                 content.append(piece)
-                self._on_text(piece)
-            tool_calls.extend(message.get("tool_calls") or [])
+                if echo:
+                    self._on_text(piece)
+            _merge_tool_calls(tool_calls, message.get("tool_calls") or [])
         return {"content": "".join(content), "tool_calls": tool_calls}
 
     def _http(self, url: str, body: Any, timeout: float) -> Any:
@@ -261,10 +290,7 @@ class LocalBrain:
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             raw = response.read().decode("utf-8", "replace")
-        lines = [line for line in raw.splitlines() if line.strip()]
-        if len(lines) == 1:
-            return json.loads(lines[0])
-        return [json.loads(line) for line in lines]
+        return _parse_body(raw)
 
     def _trim(self) -> None:
         limit = max(2, self.config.history_turns * 2)
@@ -273,6 +299,96 @@ class LocalBrain:
             trimmed = trimmed[1:]  # a tool result with no call above it
         self._history = trimmed
 
+
+
+# ---------------------------------------------------------------------------
+# Server dialects
+# ---------------------------------------------------------------------------
+class OllamaDialect:
+    """Ollama's native API: NDJSON streaming, tools by name."""
+
+    name = "ollama"
+    chat_path = "/api/chat"
+    models_path = "/api/tags"
+
+    @staticmethod
+    def body(model, system, messages, tools, schema, stream):
+        body = {
+            "model": model,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "stream": stream,
+            # Low but not zero: deterministic enough to follow the protocol,
+            # loose enough to not loop on a phrase.
+            "options": {"temperature": 0.2},
+        }
+        if tools:
+            body["tools"] = tools
+        if schema:
+            body["format"] = schema
+        return body
+
+    @staticmethod
+    def message_of(chunk):
+        return chunk.get("message") or {}
+
+    @staticmethod
+    def models_of(payload):
+        return [model.get("name", "") for model in payload.get("models", [])]
+
+    @staticmethod
+    def tool_message(result):
+        return {
+            "role": "tool",
+            "tool_name": result.name,
+            "content": ("ERROR: " if result.is_error else "") + result.content,
+        }
+
+
+class OpenAIDialect:
+    """The OpenAI-compatible API that llama.cpp, LM Studio and vLLM serve."""
+
+    name = "openai"
+    chat_path = "/v1/chat/completions"
+    models_path = "/v1/models"
+
+    @staticmethod
+    def body(model, system, messages, tools, schema, stream):
+        body = {
+            "model": model,
+            "messages": [{"role": "system", "content": system}, *messages],
+            "stream": stream,
+            "temperature": 0.2,
+        }
+        if tools:
+            body["tools"] = tools
+        if schema:
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "strict": True, "schema": schema},
+            }
+        return body
+
+    @staticmethod
+    def message_of(chunk):
+        choices = chunk.get("choices") or [{}]
+        choice = choices[0] if choices else {}
+        # Streaming sends deltas; a single response sends a whole message.
+        return choice.get("delta") or choice.get("message") or {}
+
+    @staticmethod
+    def models_of(payload):
+        return [model.get("id", "") for model in payload.get("data", [])]
+
+    @staticmethod
+    def tool_message(result):
+        return {
+            "role": "tool",
+            "tool_call_id": result.call_id,
+            "content": ("ERROR: " if result.is_error else "") + result.content,
+        }
+
+
+DIALECTS = {"ollama": OllamaDialect, "openai": OpenAIDialect}
 
 # ---------------------------------------------------------------------------
 # Parsing the prose dialect
@@ -358,3 +474,52 @@ def _has_model(models: list[str], wanted: str) -> bool:
     # "qwen2.5-coder:7b" should match an installed "qwen2.5-coder:7b" exactly,
     # and a bare "qwen2.5-coder" should match its default tag.
     return any(name == wanted or name.split(":")[0] == wanted for name in models)
+
+
+def _parse_body(raw: str) -> Any:
+    """Read one JSON object, NDJSON (Ollama) or server-sent events (OpenAI)."""
+    chunks: list[Any] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("data:"):  # server-sent events
+            line = line[5:].strip()
+            if line == "[DONE]":
+                continue
+        try:
+            chunks.append(json.loads(line))
+        except ValueError:
+            continue
+    if not chunks:
+        raise ValueError("no JSON in response")
+    return chunks[0] if len(chunks) == 1 else chunks
+
+
+def _merge_tool_calls(
+    collected: list[dict[str, Any]], incoming: list[dict[str, Any]]
+) -> None:
+    """Accumulate tool calls that a streaming server sends in fragments.
+
+    Streamed OpenAI-compatible calls arrive as indexed pieces — the name in one
+    chunk, the arguments a few characters at a time in the next — so they are
+    joined by index rather than appended.
+    """
+    for raw in incoming:
+        index = raw.get("index")
+        existing = None
+        if index is not None:
+            existing = next(
+                (call for call in collected if call.get("index") == index), None
+            )
+        if existing is None:
+            collected.append(json.loads(json.dumps(raw)))  # a private copy
+            continue
+        function = existing.setdefault("function", {})
+        piece = raw.get("function") or {}
+        if piece.get("name"):
+            function["name"] = piece["name"]
+        if piece.get("arguments"):
+            function["arguments"] = (function.get("arguments") or "") + piece["arguments"]
+        if raw.get("id"):
+            existing["id"] = raw["id"]

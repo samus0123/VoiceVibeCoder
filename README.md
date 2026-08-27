@@ -69,15 +69,31 @@ above it is ordinary software that does not care who is thinking.
 | Brain | What it is | Needs |
 | --- | --- | --- |
 | `claude` | Claude, streaming, with adaptive thinking and cached prompts | an API key |
-| `local` | a model on this machine via [Ollama](https://ollama.com) | no key, no network |
+| `local` | a model on this machine — Ollama, llama.cpp, LM Studio, vLLM | no key, no network |
 | `auto` | Claude when credentials exist, local when they do not | whichever is there |
 
 ```bash
-ollama pull qwen2.5-coder:7b
-voicevibe --brain local                       # entirely offline
+# Ollama
+ollama pull qwen2.5-coder:7b && voicevibe --brain local
+
+# llama.cpp — the same flag, nothing else to configure
+llama-server -m qwen2.5-coder-7b-q4.gguf --port 11434
+voicevibe --brain local
+
+# any model, any machine
 voicevibe --brain local --local-model llama3.1:8b
-voicevibe --local-url http://192.168.1.20:11434   # a model on another machine
+voicevibe --local-url http://192.168.1.20:11434
 ```
+
+**The server is detected, not configured.** Whichever model-listing endpoint
+answers — Ollama's `/api/tags` or the OpenAI-compatible `/v1/models` — decides
+which dialect it speaks, including how tool results are addressed and how JSON
+schemas are requested. Pin it with `local_api = "ollama"` or `"openai"` if you
+would rather it not probe.
+
+For this program's job — writing whole files that run first time — a
+**coder-tuned** model beats a general one of the same size. `qwen2.5-coder:7b`
+follows the file protocol more reliably than `llama3.1:8b`.
 
 The hard part is not the transport, it is that **small local models are bad at
 tool calling**. A 7B coder will describe the file it would write instead of
@@ -382,7 +398,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 181 tests, no microphone or API key required
+pytest                       # 191 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 

@@ -56,6 +56,11 @@ def chat(content: str = "", tool_calls=None):
     return {"message": message, "done": True}
 
 
+def ollama(config, **overrides):
+    """Config with the dialect pinned, so no detection request is made."""
+    return config.merged(local_api="ollama", **overrides)
+
+
 def tools():
     return [
         {
@@ -107,7 +112,7 @@ def test_summary_falls_back_to_the_file_list():
 # -- the brain itself -------------------------------------------------------
 def test_a_prose_reply_becomes_tool_calls(config):
     server = FakeServer(chat(REPLY_IN_PROSE))
-    brain = LocalBrain(config, request=server)
+    brain = LocalBrain(ollama(config), request=server)
     reply = brain.turn("system", "make a counter", [], tools())
 
     names = [call.name for call in reply.tool_calls]
@@ -124,7 +129,7 @@ def test_native_tool_calls_are_used_when_the_model_makes_them(config):
             [{"function": {"name": "write_file", "arguments": {"path": "a.py", "content": "x"}}}],
         )
     )
-    reply = LocalBrain(config, request=server).turn("system", "go", [], tools())
+    reply = LocalBrain(ollama(config), request=server).turn("system", "go", [], tools())
     assert [call.name for call in reply.tool_calls] == ["write_file"]
     assert reply.tool_calls[0].arguments["content"] == "x"
 
@@ -133,7 +138,7 @@ def test_arguments_arriving_as_a_json_string_are_parsed(config):
     server = FakeServer(
         chat("", [{"function": {"name": "write_file", "arguments": '{"path": "a.py"}'}}])
     )
-    reply = LocalBrain(config, request=server).turn("system", "go", [], tools())
+    reply = LocalBrain(ollama(config), request=server).turn("system", "go", [], tools())
     assert reply.tool_calls[0].arguments == {"path": "a.py"}
 
 
@@ -144,7 +149,7 @@ def test_a_streamed_response_is_folded_into_one_message(config):
         {"message": {"content": ""}, "done": True},
     ]
     streamed: list[str] = []
-    brain = LocalBrain(config, on_text=streamed.append, request=FakeServer(chunks))
+    brain = LocalBrain(ollama(config), on_text=streamed.append, request=FakeServer(chunks))
     reply = brain.turn("system", "go", [], tools())
 
     assert reply.text == "Here is the plan."
@@ -153,7 +158,7 @@ def test_a_streamed_response_is_folded_into_one_message(config):
 
 def test_the_request_carries_the_model_the_system_prompt_and_the_tools(config):
     server = FakeServer(chat("nothing to do"))
-    LocalBrain(config.merged(local_model="tiny:1b"), request=server).turn(
+    LocalBrain(ollama(config, local_model="tiny:1b"), request=server).turn(
         "SYSTEM TEXT", "go", [], tools()
     )
     url, body = server.requests[0]
@@ -167,7 +172,7 @@ def test_the_request_carries_the_model_the_system_prompt_and_the_tools(config):
 
 def test_tool_results_are_sent_back_as_tool_messages(config):
     server = FakeServer(chat("ok"), chat("done"))
-    brain = LocalBrain(config, request=server)
+    brain = LocalBrain(ollama(config), request=server)
     brain.turn("system", "go", [], tools())
     brain.turn(
         "system",
@@ -183,7 +188,7 @@ def test_tool_results_are_sent_back_as_tool_messages(config):
 
 def test_an_error_result_is_marked_for_the_model(config):
     server = FakeServer(chat("ok"), chat("done"))
-    brain = LocalBrain(config, request=server)
+    brain = LocalBrain(ollama(config), request=server)
     brain.turn("system", "go", [], tools())
     brain.turn(
         "system",
@@ -198,7 +203,7 @@ def test_an_error_result_is_marked_for_the_model(config):
 def test_structured_output_asks_for_the_schema_and_unwraps_json(config):
     schema = {"type": "object", "properties": {}}
     server = FakeServer(chat('```json\n{"ideas": []}\n```'))
-    payload = LocalBrain(config, request=server).structured("sys", "prompt", schema)
+    payload = LocalBrain(ollama(config), request=server).structured("sys", "prompt", schema)
 
     assert payload == '{"ideas": []}'
     _url, body = server.requests[0]
@@ -208,7 +213,7 @@ def test_structured_output_asks_for_the_schema_and_unwraps_json(config):
 
 def test_reset_forgets_the_conversation(config):
     server = FakeServer(chat("one"), chat("two"))
-    brain = LocalBrain(config, request=server)
+    brain = LocalBrain(ollama(config), request=server)
     brain.turn("system", "first", [], tools())
     brain.reset()
     brain.turn("system", "second", [], tools())
@@ -218,7 +223,7 @@ def test_reset_forgets_the_conversation(config):
 
 
 def test_an_unreachable_server_explains_the_setup(config):
-    brain = LocalBrain(config, request=FakeServer(OSError("refused"), repeat=True))
+    brain = LocalBrain(ollama(config), request=FakeServer(OSError("refused"), repeat=True))
     assert not brain.available()
     assert "ollama pull" in brain.setup_help()
 
@@ -289,3 +294,181 @@ def test_an_unknown_brain_is_rejected(config):
 
     with pytest.raises(ValueError, match="banana"):
         brain_module.build_brain(config.merged(brain="banana"))
+
+
+# -- speaking to llama.cpp / LM Studio / vLLM -------------------------------
+def openai_chat(content="", tool_calls=None):
+    message = {"role": "assistant", "content": content}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return {"choices": [{"message": message, "finish_reason": "stop"}]}
+
+
+def test_the_dialect_is_detected_when_ollama_answers(config):
+    server = FakeServer({"models": [{"name": "qwen2.5-coder:7b"}]})
+    brain = LocalBrain(config, request=server)
+
+    assert brain.installed_models() == ["qwen2.5-coder:7b"]
+    assert brain.api_name == "ollama"
+
+
+def test_the_dialect_falls_through_to_openai_when_ollama_does_not_answer(config):
+    class Server:
+        def __init__(self):
+            self.urls = []
+
+        def __call__(self, url, body, timeout=None):
+            self.urls.append(url)
+            if url.endswith("/api/tags"):
+                raise OSError("404")
+            return {"data": [{"id": "llama-3.1-8b-instruct"}]}
+
+    server = Server()
+    brain = LocalBrain(config, request=server)
+
+    assert brain.installed_models() == ["llama-3.1-8b-instruct"]
+    assert brain.api_name == "openai"
+    assert server.urls == [
+        "http://localhost:11434/api/tags",
+        "http://localhost:11434/v1/models",
+    ]
+
+
+def test_an_openai_server_gets_an_openai_shaped_request(config):
+    server = FakeServer(openai_chat("nothing to do"))
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    brain.turn("SYSTEM", "go", [], tools())
+
+    url, body = server.requests[0]
+    assert url.endswith("/v1/chat/completions")
+    assert body["temperature"] == 0.2
+    assert "options" not in body           # that is Ollama's spelling
+    assert body["messages"][0]["role"] == "system"
+
+
+def test_an_openai_reply_in_prose_still_becomes_tool_calls(config):
+    server = FakeServer(openai_chat(REPLY_IN_PROSE))
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    reply = brain.turn("system", "make a counter", [], tools())
+
+    assert [call.name for call in reply.tool_calls] == [
+        "write_file",
+        "write_file",
+        "finish",
+    ]
+
+
+def test_an_openai_tool_call_keeps_the_servers_id_for_the_result(config):
+    server = FakeServer(
+        openai_chat(
+            tool_calls=[
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "write_file", "arguments": '{"path": "a.py"}'},
+                }
+            ]
+        ),
+        openai_chat("done"),
+    )
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    reply = brain.turn("system", "go", [], tools())
+    assert reply.tool_calls[0].id == "call_abc"
+
+    brain.turn(
+        "system",
+        None,
+        [ToolResult(call_id="call_abc", name="write_file", content="wrote a.py")],
+        tools(),
+    )
+    _url, body = server.requests[1]
+    tool_message = [m for m in body["messages"] if m["role"] == "tool"][0]
+    assert tool_message["tool_call_id"] == "call_abc"
+
+
+def test_openai_structured_output_uses_response_format(config):
+    schema = {"type": "object", "properties": {}}
+    server = FakeServer(openai_chat('{"ideas": []}'))
+    payload = LocalBrain(config.merged(local_api="openai"), request=server).structured(
+        "sys", "prompt", schema
+    )
+
+    assert payload == '{"ideas": []}'
+    _url, body = server.requests[0]
+    assert body["response_format"]["json_schema"]["schema"] == schema
+
+
+def test_server_sent_events_are_parsed_and_streamed(config):
+    from voicevibecoder.codegen.local_brain import _parse_body
+
+    raw = (
+        'data: {"choices":[{"delta":{"content":"Here "}}]}\n'
+        'data: {"choices":[{"delta":{"content":"we go"}}]}\n'
+        "data: [DONE]\n"
+    )
+    chunks = _parse_body(raw)
+    streamed: list[str] = []
+    brain = LocalBrain(
+        config.merged(local_api="openai"),
+        on_text=streamed.append,
+        request=lambda *_a, **_k: chunks,
+    )
+    reply = brain.turn("system", "go", [], tools())
+
+    assert reply.text == "Here we go"
+    assert streamed == ["Here ", "we go"]
+
+
+def test_tool_calls_streamed_in_fragments_are_reassembled(config):
+    chunks = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "write_file", "arguments": '{"pa'},
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"arguments": 'th": "a.py"}'}}
+                        ]
+                    }
+                }
+            ]
+        },
+    ]
+    brain = LocalBrain(
+        config.merged(local_api="openai"), request=lambda *_a, **_k: chunks
+    )
+    reply = brain.turn("system", "go", [], tools())
+
+    assert len(reply.tool_calls) == 1
+    assert reply.tool_calls[0].name == "write_file"
+    assert reply.tool_calls[0].arguments == {"path": "a.py"}
+
+
+def test_the_setup_help_names_both_servers(config):
+    brain = LocalBrain(config, request=FakeServer(OSError("refused"), repeat=True))
+    help_text = brain.setup_help()
+    assert "ollama" in help_text.lower()
+    assert "llama-server" in help_text
+
+
+def test_structured_payloads_are_not_echoed_to_the_console(config):
+    streamed: list[str] = []
+    server = FakeServer(chat('{"ideas": []}'))
+    brain = LocalBrain(ollama(config), on_text=streamed.append, request=server)
+    brain.structured("sys", "prompt", {"type": "object"})
+
+    assert streamed == []  # JSON is data, not narration

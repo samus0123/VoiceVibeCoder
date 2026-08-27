@@ -32,6 +32,7 @@ class Config:
 
     # --- local brain (Ollama-compatible, no key and no network) ----------
     local_model: str = "qwen2.5-coder:7b"
+    local_api: str = "auto"  # auto | ollama | openai (llama.cpp, LM Studio, vLLM)
     local_url: str = "http://localhost:11434"
     local_timeout_s: float = 300.0
 

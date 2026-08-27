@@ -9,6 +9,7 @@ effort = "high"            # low | medium | high | xhigh | max
 # The local brain: no API key, no network.
 local_model = "qwen2.5-coder:7b"
 local_url = "http://localhost:11434"
+local_api = "auto"         # auto | ollama | openai (llama.cpp, LM Studio, vLLM)
 local_timeout_s = 300
 
 # Listening
