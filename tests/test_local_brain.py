@@ -595,3 +595,125 @@ def test_the_sweep_skips_addresses_already_tried(config, monkeypatch):
     swept = LocalBrain(config.merged(local_url="http://127.0.0.1:11434")).scanned_urls()
     assert "http://127.0.0.1:11434" not in swept
     assert "http://127.0.0.1:8081" in swept
+
+
+# -- when the server says no ------------------------------------------------
+def http_error(status, payload):
+    import io
+    import json as json_module
+    import urllib.error
+
+    return urllib.error.HTTPError(
+        "http://x",
+        status,
+        "Bad Request",
+        {},
+        io.BytesIO(json_module.dumps(payload).encode()),
+    )
+
+
+def test_the_servers_own_reason_reaches_the_user(config):
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        raise ServerRejected(413, "the request exceeds the context window")
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    with pytest.raises(RuntimeError, match="exceeds the context window"):
+        brain.turn("system", "go", [], tools())
+
+
+def test_a_server_that_refuses_tools_is_retried_without_them(config):
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    seen = []
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        seen.append(body)
+        if body.get("tools"):
+            raise ServerRejected(400, "this model does not support tools")
+        return openai_chat(REPLY_IN_PROSE)
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    reply = brain.turn("system", "make a counter", [], tools())
+
+    assert len(seen) == 2                     # rejected, then retried
+    assert "tools" not in seen[1]
+    assert [c.name for c in reply.tool_calls] == ["write_file", "write_file", "finish"]
+
+
+def test_a_refused_feature_is_not_sent_again(config):
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    seen = []
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        seen.append(body)
+        if body.get("tools"):
+            raise ServerRejected(400, "tools are not supported")
+        return openai_chat("ok")
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    brain.turn("system", "one", [], tools())
+    brain.turn("system", "two", [], tools())
+
+    # rejected, retried, then never offered again
+    assert [bool(body.get("tools")) for body in seen] == [True, False, False]
+
+
+def test_a_refused_json_schema_drops_only_the_schema(config):
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    seen = []
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        seen.append(body)
+        if body.get("response_format"):
+            raise ServerRejected(400, "response_format json_schema is unsupported")
+        return openai_chat('{"ideas": []}')
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    assert brain.structured("sys", "prompt", {"type": "object"}) == '{"ideas": []}'
+    assert "response_format" not in seen[1]
+
+
+def test_a_genuine_error_is_not_papered_over_as_a_feature_problem(config):
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    def server(url, body, timeout=None):
+        if url.endswith("/v1/models"):
+            return {"data": [{"id": "m"}]}
+        raise ServerRejected(500, "internal error: out of memory")
+
+    brain = LocalBrain(config.merged(local_api="openai"), request=server)
+    with pytest.raises(RuntimeError, match="out of memory"):
+        brain.turn("system", "go", [], tools())
+
+
+def test_the_error_body_is_dug_out_of_the_http_error(config):
+    from voicevibecoder.codegen.local_brain import _error_detail
+
+    detail = _error_detail(http_error(400, {"error": {"message": "no tools here"}}))
+    assert detail == "no tools here"
+
+
+def test_a_404_while_probing_is_not_a_failure(config):
+    """llama.cpp answers 404 on Ollama's endpoint; that means "wrong API"."""
+    from voicevibecoder.codegen.local_brain import ServerRejected
+
+    def server(url, body, timeout=None):
+        if url.endswith("/api/tags"):
+            raise ServerRejected(404, "File Not Found")
+        return {"data": [{"id": "llama-3.2-3b"}]}
+
+    brain = LocalBrain(config, request=server)
+    assert brain.installed_models() == ["llama-3.2-3b"]
+    assert brain.api_name == "openai"

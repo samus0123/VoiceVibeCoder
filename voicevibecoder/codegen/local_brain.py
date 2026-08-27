@@ -103,6 +103,7 @@ class LocalBrain:
         self._dialect: Any = DIALECTS.get(config.local_api)  # None means "probe"
         self._served: list[str] | None = None
         self._found_url: str = ""
+        self._unsupported: set[str] = set()
 
     # -- availability ----------------------------------------------------
     def available(self) -> bool:
@@ -331,15 +332,26 @@ class LocalBrain:
     ) -> dict[str, Any]:
         dialect = self.dialect
         body = dialect.body(
-            self.effective_model, system, messages, tools, schema, stream
+            self.effective_model,
+            system,
+            messages,
+            None if "tools" in self._unsupported else tools,
+            None if "schema" in self._unsupported else schema,
+            stream,
         )
 
+        url = f"{self.base_url}{dialect.chat_path}"
         try:
-            payload = self._request(
-                f"{self.base_url}{dialect.chat_path}",
-                body,
-                timeout=self.config.local_timeout_s,
-            )
+            payload = self._request(url, body, timeout=self.config.local_timeout_s)
+        except ServerRejected as rejection:
+            # Plenty of local builds refuse tools, or JSON schemas, or both.
+            # The prose protocol needs neither, so drop them and try once more
+            # rather than failing at something we can do without.
+            retry = rejection.without_unsupported(body)
+            if retry is None:
+                raise RuntimeError(f"the model server refused: {rejection}") from rejection
+            self._unsupported.update(retry.pop("_dropped"))
+            payload = self._request(url, retry, timeout=self.config.local_timeout_s)
         except urllib.error.URLError as exc:
             raise RuntimeError(f"local model unreachable: {self.setup_help()}") from exc
         except OSError as exc:
@@ -364,7 +376,13 @@ class LocalBrain:
         return {"content": "".join(content), "tool_calls": tool_calls}
 
     def _http(self, url: str, body: Any, timeout: float) -> Any:
-        """POST JSON (or GET when body is None); returns dict or NDJSON list."""
+        """POST JSON (or GET when body is None); returns dict or NDJSON list.
+
+        A rejected request carries the reason in its *body* — "this model does
+        not support tools", a grammar error, a context-length complaint. urllib
+        throws that away and leaves you with "HTTP Error 400: Bad Request", so
+        it is read back out and put in the exception where it is of some use.
+        """
         data = json.dumps(body).encode() if body is not None else None
         request = urllib.request.Request(  # noqa: S310 — http(s) URL from config
             url,
@@ -372,8 +390,11 @@ class LocalBrain:
             headers={"Content-Type": "application/json"},
             method="POST" if data else "GET",
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            raw = response.read().decode("utf-8", "replace")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+                raw = response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            raise ServerRejected(exc.code, _error_detail(exc)) from exc
         return _parse_body(raw)
 
     def _trim(self) -> None:
@@ -607,3 +628,67 @@ def _merge_tool_calls(
             function["arguments"] = (function.get("arguments") or "") + piece["arguments"]
         if raw.get("id"):
             existing["id"] = raw["id"]
+
+
+class ServerRejected(OSError):
+    """The server answered, and the answer was no — with a reason.
+
+    An OSError on purpose: during dialect probing a 404 means "not this API",
+    which every caller already handles as "nothing here". Only the chat path
+    cares about the distinction, and it catches this class first.
+    """
+
+    # Words a server uses when it is refusing a *feature* rather than the
+    # request itself. Each maps to the request key worth dropping.
+    FEATURE_HINTS = {
+        "tools": ("tool", "function call", "tool_choice"),
+        "schema": ("response_format", "json_schema", "grammar", "structured"),
+    }
+
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+        super().__init__(f"HTTP {status}: {detail}" if detail else f"HTTP {status}")
+
+    def without_unsupported(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """A retry with the refused feature removed, or None if that is not it."""
+        haystack = self.detail.lower()
+        dropped = {
+            feature
+            for feature, hints in self.FEATURE_HINTS.items()
+            if any(hint in haystack for hint in hints)
+        }
+        # A 400 with no clue in it is still most likely the tools payload,
+        # which is the only exotic thing in an otherwise ordinary request.
+        if not dropped and self.status == 400 and body.get("tools"):
+            dropped = {"tools"}
+        if not dropped:
+            return None
+
+        retry = {key: value for key, value in body.items() if key not in ("tools",)} \
+            if "tools" in dropped else dict(body)
+        if "schema" in dropped:
+            retry.pop("format", None)
+            retry.pop("response_format", None)
+        if not (set(body) - set(retry)):
+            return None  # nothing actually came off; do not loop
+        retry["_dropped"] = dropped
+        return retry
+
+
+def _error_detail(exc: urllib.error.HTTPError) -> str:
+    """The server's own explanation, dug out of the error body."""
+    try:
+        raw = exc.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 — a body we cannot read is no body
+        return ""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return " ".join(raw.split())[:300]
+    if isinstance(parsed, dict):
+        error = parsed.get("error", parsed)
+        if isinstance(error, dict):
+            return str(error.get("message") or error)[:300]
+        return str(error)[:300]
+    return str(parsed)[:300]

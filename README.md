@@ -116,6 +116,13 @@ when the model manages them, and otherwise a plain-prose convention —
 happened. That is what makes a small local model a first-class citizen here
 rather than a degraded mode.
 
+**A server that refuses a feature still gets to work.** Plenty of local builds
+reject `tools`, or JSON schemas, or both — and urllib turns the explanation
+into a bare "HTTP Error 400". The reason is read back out of the response body,
+and if the server refused a *feature* rather than the request, it is dropped and
+the request retried once; the prose protocol needs neither. What the server
+actually said reaches you either way.
+
 The transport is `urllib` from the standard library: a program whose selling
 point is working offline should not need a package index to start.
 
@@ -450,7 +457,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 209 tests, no microphone or API key required
+pytest                       # 216 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 
