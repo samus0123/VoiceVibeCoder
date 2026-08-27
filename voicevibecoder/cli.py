@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from voicevibecoder import config as config_module
@@ -97,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="type each commit message instead of using the spoken summary",
     )
     parser.add_argument("--no-git", action="store_true", help="do not commit changes")
+    parser.add_argument(
+        "--no-serve",
+        action="store_true",
+        help="do not start a local model server at launch",
+    )
+    parser.add_argument("--model-file", help="the .gguf to load (default: find one)")
     parser.add_argument("--no-color", action="store_true", help="plain output")
     return parser
 
@@ -112,7 +118,10 @@ def config_from_args(args: argparse.Namespace) -> config_module.Config:
         "input_device": args.device,
         "whisper_model": args.whisper_model,
         "idea_bar": args.idea_bar,
+        "local_model_file": args.model_file,
     }
+    if args.no_serve:
+        overrides["auto_serve"] = False
     if args.quiet:
         overrides["tts_backend"] = "off"
     if args.no_run:
@@ -150,9 +159,14 @@ def main(argv: list[str] | None = None) -> int:
 
     workspace = Workspace(config.workspace)
 
+    # Kick the model server off first and do not wait for it: loading is the
+    # slow part, and it overlaps with reading the greeting and typing the first
+    # instruction, which is time that would be spent anyway.
+    waiter = start_model_server(config, console)
+
     # Constructing this connects to nothing; the brain is dialled on the first
     # build, so a missing model server cannot stop the session from opening.
-    generator = CodeGenerator(config, on_text=console.chunk)
+    generator = CodeGenerator(config, on_text=console.chunk, waiter=waiter)
 
     speaker = NullSpeaker() if args.quiet else build_speaker(config)
     session = Session(
@@ -186,6 +200,42 @@ def main(argv: list[str] | None = None) -> int:
         console.write("")
         console.vibe("Stopped listening.")
     return 0
+
+
+def start_model_server(
+    config: config_module.Config, console: Console
+) -> Callable[[], bool] | None:
+    """Launch a local model server in the background, if one is warranted.
+
+    Returns a callable the brain uses to wait for it — called only if, when
+    the first build happens, the model is still loading.
+    """
+    if not config.auto_serve or config.brain == "claude":
+        return None
+
+    from voicevibecoder.model_server import ModelServer  # noqa: PLC0415
+
+    server = ModelServer.discover(config)
+    if server is None:
+        return None
+    if server.ready():
+        return None  # already answering; nothing to start or wait for
+    if not server.start():
+        return None  # the port is taken by something we did not launch
+
+    console.write(f"  loading {server.describe()} in the background", "dim")
+
+    def wait() -> bool:
+        console.write("  ⋯  waiting for the model to finish loading", "dim")
+        ready = server.wait(
+            timeout_s=config.local_load_wait_s,
+            on_tick=lambda _elapsed: None,
+        )
+        if not ready:
+            console.error(f"the model server did not come up.\n{server.tail()}")
+        return ready
+
+    return wait
 
 
 def _brain_label(config: config_module.Config) -> str:

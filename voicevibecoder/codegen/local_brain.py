@@ -94,10 +94,15 @@ class LocalBrain:
         config: Config,
         on_text: Callable[[str], None] | None = None,
         request: Callable[..., Any] | None = None,
+        waiter: Callable[[], bool] | None = None,
     ) -> None:
         self.config = config
         self._on_text = on_text or (lambda _chunk: None)
         self._request = request or self._http
+        # Called once if nothing answers: a server this program started may
+        # still be reading the model off disk.
+        self._waiter = waiter
+        self._waited = False
         self._history: list[dict[str, Any]] = []
         self._call_counter = 0
         self._dialect: Any = DIALECTS.get(config.local_api)  # None means "probe"
@@ -122,7 +127,16 @@ class LocalBrain:
             return found
         # Nothing where we were told to look: sweep this machine for a server
         # someone started on a port of their own choosing.
-        return self._try_urls(self.scanned_urls(), dialects)
+        found = self._try_urls(self.scanned_urls(), dialects)
+        if found is not None:
+            return found
+        # Still nothing — but a server we launched at startup may just be slow
+        # to load. Wait for it once, then look again.
+        if self._waiter is not None and not self._waited:
+            self._waited = True
+            if self._waiter():
+                return self._try_urls(self.candidate_urls(), dialects)
+        return None
 
     def scanned_urls(self) -> list[str]:
         """Local addresses that have something listening on them."""

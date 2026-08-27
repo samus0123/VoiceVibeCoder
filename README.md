@@ -245,6 +245,15 @@ desktop path keeps dictated code on the machine; this one does not. And **the
 prebuilt wheel for your Termux target, `pkg install rust` first and expect a
 long build.
 
+**The model loads while you type.** At launch the program starts a local model
+server itself — finds `llama-server`, finds the largest `.gguf` you have, and
+puts it in the background — then goes straight to the prompt. Loading a
+multi-gigabyte model is unavoidably slow, but it overlaps with reading the
+greeting and typing the first instruction, which is time you were spending
+anyway. If the model is still loading when you finish typing, that first build
+waits for it once instead of failing. `--no-serve` turns it off; `--model-file`
+picks a specific one.
+
 **A brain on the phone itself.** `llama.cpp` is packaged for Termux, so this
 needs no desktop and no network once the model file is down. One command does
 all of it:
@@ -460,7 +469,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 216 tests, no microphone or API key required
+pytest                       # 228 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 

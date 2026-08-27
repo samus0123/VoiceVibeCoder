@@ -69,10 +69,12 @@ class CodeGenerator:
         config: Config,
         brain: Brain | None = None,
         on_text: Callable[[str], None] | None = None,
+        waiter: Callable[[], bool] | None = None,
     ) -> None:
         self.config = config
         self._brain = brain
         self._on_text = on_text
+        self._waiter = waiter
 
     @property
     def brain(self) -> Brain:
@@ -85,7 +87,9 @@ class CodeGenerator:
         so when you finally ask it to build something.
         """
         if self._brain is None:
-            self._brain = build_brain(self.config, on_text=self._on_text)
+            self._brain = build_brain(
+                self.config, on_text=self._on_text, waiter=self._waiter
+            )
         return self._brain
 
     @property

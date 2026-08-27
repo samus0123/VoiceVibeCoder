@@ -86,7 +86,9 @@ class BrainUnavailable(RuntimeError):
 
 
 def build_brain(
-    config: Config, on_text: Callable[[str], None] | None = None
+    config: Config,
+    on_text: Callable[[str], None] | None = None,
+    waiter: Callable[[], bool] | None = None,
 ) -> Brain:
     """Pick a brain: what was asked for, or the best that can be reached.
 
@@ -102,7 +104,7 @@ def build_brain(
     if wanted == "claude":
         return ClaudeBrain(config, on_text=on_text)
     if wanted == "local":
-        brain = LocalBrain(config, on_text=on_text)
+        brain = LocalBrain(config, on_text=on_text, waiter=waiter)
         brain.require()
         return brain
     if wanted != "auto":
@@ -111,7 +113,7 @@ def build_brain(
     try:
         return ClaudeBrain(config, on_text=on_text)
     except RuntimeError as claude_problem:
-        local = LocalBrain(config, on_text=on_text)
+        local = LocalBrain(config, on_text=on_text, waiter=waiter)
         if local.available():
             return local
         raise BrainUnavailable(

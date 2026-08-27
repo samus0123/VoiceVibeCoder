@@ -35,6 +35,11 @@ class Config:
     local_api: str = "auto"  # auto | ollama | openai (llama.cpp, LM Studio, vLLM)
     local_url: str = "http://localhost:11434"
     local_timeout_s: float = 300.0
+    # Start the model server ourselves at launch, so it loads while you type.
+    auto_serve: bool = True
+    local_model_file: str = ""  # a specific .gguf; empty means "go and find one"
+    local_ctx: int = 4096
+    local_load_wait_s: float = 600.0
 
     # --- audio capture ---------------------------------------------------
     sample_rate: int = 16000
