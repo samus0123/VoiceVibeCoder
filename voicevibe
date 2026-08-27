@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+# Run VoiceVibeCoder with no installation at all.
+#
+# `pip install -e .` is convenient but it is also a thing that can fail — on a
+# phone, on a locked-down box, behind a proxy — and when it fails the error you
+# get is "No module named voicevibecoder", which says nothing useful. This
+# script sidesteps the whole question: it points Python at the source sitting
+# next to it and runs the program.
+#
+#     ./voicevibe --text
+#     ln -s "$PWD/voicevibe" "$PREFIX/bin/voicevibe"   # optional, Termux
+#
+# If the shebang is not honoured (some minimal Androids), run: sh voicevibe
+
+set -e
+
+# Resolve this script's directory, following a symlink if we were launched
+# through one, so linking it onto PATH still finds the source.
+script=$0
+while [ -L "$script" ]; do
+    link=$(readlink "$script")
+    case $link in
+        /*) script=$link ;;
+        *) script=$(dirname "$script")/$link ;;
+    esac
+done
+here=$(CDPATH= cd -- "$(dirname -- "$script")" && pwd)
+
+python=${VOICEVIBE_PYTHON:-}
+if [ -z "$python" ]; then
+    python=$(command -v python3 || command -v python || true)
+fi
+if [ -z "$python" ]; then
+    echo "No Python found. In Termux:  pkg install python" >&2
+    exit 127
+fi
+
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec "$python" -m voicevibecoder "$@"

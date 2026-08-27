@@ -51,6 +51,9 @@ Repository = "https://github.com/samus0123/voicevibecoder"
 [tool.hatch.build.targets.wheel]
 packages = ["voicevibecoder"]
 
+[tool.hatch.build.targets.sdist]
+include = ["voicevibecoder", "tests", "examples", "voicevibe", "README.md", "LICENSE"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

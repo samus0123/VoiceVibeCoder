@@ -108,6 +108,7 @@ capability beyond that is an extra, so no machine builds a wheel for a code
 path it will not run.
 
 ```bash
+./voicevibe                 # no install at all: run it straight from the clone
 pip install -e '.[all]'     # the laptop install: Claude, microphone, speech
 pip install -e '.[claude]'  # + Claude only (you have a key, no microphone)
 pip install -e '.[voice]'   # + microphone and local speech recognition
@@ -155,9 +156,21 @@ stale and cannot talk to each other — then:
 ```bash
 pkg install python git termux-api
 git clone https://github.com/samus0123/voicevibecoder && cd voicevibecoder
-pip install -e .                      # nothing to compile, nothing to wait for
-voicevibe --brain local --local-url http://<your-desktop>:11434
+./voicevibe --brain local --local-url http://<your-desktop>:11434
 ```
+
+**There is no install step.** `./voicevibe` is a shell script that points Python
+at the source next to it and runs the program — nothing to compile, nothing to
+download, nothing that can fail with `No module named voicevibecoder`. To call
+it from anywhere, link it onto your PATH:
+
+```bash
+ln -s "$PWD/voicevibe" "$PREFIX/bin/voicevibe"
+voicevibe                             # now works from any directory
+```
+
+`pip install -e .` still works if you prefer a real install, and gives you the
+same `voicevibe` command. It is simply not required.
 
 That install is deliberately empty of dependencies: on a phone, listening goes
 through Termux:API rather than PortAudio, and the local brain speaks HTTP from
