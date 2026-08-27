@@ -13,8 +13,18 @@ set -e
 PORT=${PORT:-11434}
 MODEL_DIR=${MODEL_DIR:-$HOME/models}
 MODEL_FILE=${MODEL_FILE:-$MODEL_DIR/llama.gguf}
-MODEL_URL=${MODEL_URL:-https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf}
-CTX=${CTX:-8192}
+# A phone is not a workstation: a 3B takes minutes to load, competes with
+# every other app for memory, and gets killed by Android partway through often
+# enough that "it timed out" becomes the normal experience. A 1B loads in
+# seconds and actually finishes. Desktops get the bigger one.
+if [ -n "$TERMUX_VERSION" ] || [ "${PREFIX#*com.termux}" != "$PREFIX" ]; then
+    DEFAULT_MODEL_URL=https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf
+else
+    DEFAULT_MODEL_URL=https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf
+fi
+MODEL_URL=${MODEL_URL:-$DEFAULT_MODEL_URL}
+# A smaller window loads faster and uses far less memory. Plenty for one file.
+CTX=${CTX:-4096}
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 say() { printf '\n==> %s\n' "$1"; }

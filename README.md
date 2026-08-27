@@ -265,9 +265,12 @@ MODEL_URL=<url> ./setup-llama       # a different GGUF
 PORT=8080 ./setup-llama             # a different port
 ```
 
-A handset realistically runs a 1–3B model. Llama 3.2 3B works; a coder-tuned
-model of the same size (`qwen2.5-coder:1.5b`) follows the file protocol more
-reliably, which is what actually decides whether you get a working program.
+On a phone the script defaults to **Llama 3.2 1B**, deliberately. A 3B takes
+minutes to load, competes with every other app for memory, and gets killed by
+Android often enough that "it timed out" becomes the normal experience; a 1B
+loads in seconds and finishes. It writes simple programs and nothing clever —
+that is the honest ceiling of a handset. Pass `MODEL_URL=` to use something
+bigger if your phone has the memory for it.
 
 **Fully off the cloud on a phone:** point the local brain at a model server on
 your desktop and nothing leaves your LAN except over your own wire.
