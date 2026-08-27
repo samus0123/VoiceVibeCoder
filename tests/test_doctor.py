@@ -91,3 +91,53 @@ def test_elsewhere_the_hint_stays_simple(monkeypatch):
     assert claude_brain._sdk_missing_help() == (
         "the Anthropic SDK is not installed (pip install anthropic)"
     )
+
+
+def test_a_server_on_an_unexpected_port_is_found_and_named(config, monkeypatch):
+    """The end of "it is running but the app cannot see it"."""
+    from voicevibecoder import doctor
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr(doctor, "_port_open", lambda port, host="127.0.0.1": port == 8081)
+    monkeypatch.setattr(
+        local_brain.LocalBrain, "installed_models", lambda self: ["llama-3.2-3b"]
+    )
+    monkeypatch.setattr(local_brain.LocalBrain, "api_name", "openai")
+
+    assert doctor.find_servers(config) == [(8081, "openai — llama-3.2-3b")]
+
+
+def test_something_listening_that_is_not_a_model_server_is_not_claimed(config, monkeypatch):
+    from voicevibecoder import doctor
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr(doctor, "_port_open", lambda port, host="127.0.0.1": port == 8000)
+    monkeypatch.setattr(local_brain.LocalBrain, "installed_models", lambda self: None)
+
+    found = doctor.find_servers(config)
+    assert found == [(8000, "something is listening, but not a model server")]
+
+
+def test_the_verdict_hands_over_the_exact_flag(config, monkeypatch):
+    from voicevibecoder import doctor
+
+    monkeypatch.setattr("voicevibecoder.doctor._claude_ready", lambda: False)
+    monkeypatch.setattr(
+        "voicevibecoder.codegen.local_brain.LocalBrain.available", lambda self: False
+    )
+    monkeypatch.setattr(doctor, "find_servers", lambda _c: [(8081, "openai — a model")])
+
+    verdict = doctor.report(config)
+    assert "--local-url http://127.0.0.1:8081" in verdict
+
+
+def test_nothing_listening_gives_the_plain_advice(config, monkeypatch):
+    from voicevibecoder import doctor
+
+    monkeypatch.setattr("voicevibecoder.doctor._claude_ready", lambda: False)
+    monkeypatch.setattr(
+        "voicevibecoder.codegen.local_brain.LocalBrain.available", lambda self: False
+    )
+    monkeypatch.setattr(doctor, "find_servers", lambda _c: [])
+
+    assert "no brain is reachable" in doctor.report(config)

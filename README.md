@@ -294,6 +294,21 @@ packages are present, whether either brain is reachable, how listening will
 happen, and whether the workspace is writable — ending in a verdict that says
 what to do next.
 
+If no brain answers, it scans this machine for one anyway. A model server
+running on a port nobody expected is the most common way this goes wrong, so
+rather than report "not reachable" it reports what it found and the flag to
+use:
+
+```
+  http://localhost:11434 --  nothing answered
+  looked at              http://localhost:11434, http://localhost:8080, ...
+  port 8081              FOUND — openai — llama-3.1-8b-instruct
+
+VERDICT: a model server is running on port 8081, but not where the
+  program was looking. Use it with:
+    ./voicevibe --brain local --local-url http://127.0.0.1:8081
+```
+
 The session itself starts whether or not a brain is reachable. Listing files,
 reading them back, running a program, undoing, dictating and quitting need no
 model at all; only building does, and if nothing is reachable it says so when
@@ -430,7 +445,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 200 tests, no microphone or API key required
+pytest                       # 204 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 

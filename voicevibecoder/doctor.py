@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import socket
 import sys
 from pathlib import Path
 
@@ -86,12 +87,49 @@ def _brains(config: Config) -> list[tuple[str, str]]:
 
     local = LocalBrain(config)
     installed = local.installed_models()
-    if installed is None:
-        rows.append((config.local_url, f"{MISSING}  no server reachable"))
-    else:
-        rows.append((config.local_url, f"ok — {len(installed)} model(s)"))
+    if installed is not None:
+        rows.append((local.base_url, f"ok — {local.api_name}, {len(installed)} model(s)"))
         rows.append((config.local_model, local.setup_help()))
+        return rows
+
+    rows.append((config.local_url, f"{MISSING}  nothing answered"))
+    rows.append(("looked at", ", ".join(local.candidate_urls())))
+    for port, what in find_servers(config):
+        rows.append((f"port {port}", f"FOUND — {what}"))
     return rows
+
+
+# Ports a local model server plausibly sits on. Scanned only on this machine,
+# only when nothing was found where we were told to look.
+SCAN_PORTS = (11434, 8080, 8081, 1234, 5000, 8000, 3000, 5001, 11435)
+
+
+def _port_open(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.3)
+        return probe.connect_ex((host, port)) == 0
+
+
+def find_servers(config: Config) -> list[tuple[int, str]]:
+    """Anything on this machine that answers like a model server.
+
+    The point is to end the "it is running but the app cannot see it"
+    conversation: whatever is listening gets named, with the flag to use.
+    """
+    from voicevibecoder.codegen.local_brain import LocalBrain  # noqa: PLC0415
+
+    found: list[tuple[int, str]] = []
+    for port in SCAN_PORTS:
+        if not _port_open(port):
+            continue
+        probe = LocalBrain(config.merged(local_url=f"http://127.0.0.1:{port}"))
+        models = probe.installed_models()
+        if models is None:
+            found.append((port, "something is listening, but not a model server"))
+        else:
+            served = ", ".join(models[:2]) or "no models loaded"
+            found.append((port, f"{probe.api_name} — {served}"))
+    return found
 
 
 def _listening(config: Config) -> list[tuple[str, str]]:
@@ -130,6 +168,19 @@ def _verdict(config: Config) -> str:
     if has_claude or has_local:
         which = config.model if has_claude else config.local_model
         return f"VERDICT: ready to build, using {which}."
+
+    discovered = [
+        port for port, what in find_servers(config) if "not a model server" not in what
+    ]
+    if discovered:
+        port = discovered[0]
+        return (
+            f"VERDICT: a model server is running on port {port}, but not where the\n"
+            "  program was looking. Use it with:\n"
+            f"    ./voicevibe --brain local --local-url http://127.0.0.1:{port}\n"
+            "  Or make it permanent in voicevibe.toml:\n"
+            f'    local_url = "http://127.0.0.1:{port}"'
+        )
     return (
         "VERDICT: it will start, and everything except building works — but no "
         "brain is reachable yet.\n"
