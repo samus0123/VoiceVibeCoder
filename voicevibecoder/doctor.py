@@ -12,7 +12,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
-import socket
 import sys
 from pathlib import Path
 
@@ -99,28 +98,21 @@ def _brains(config: Config) -> list[tuple[str, str]]:
     return rows
 
 
-# Ports a local model server plausibly sits on. Scanned only on this machine,
-# only when nothing was found where we were told to look.
-SCAN_PORTS = (11434, 8080, 8081, 1234, 5000, 8000, 3000, 5001, 11435)
-
-
-def _port_open(port: int, host: str = "127.0.0.1") -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.settimeout(0.3)
-        return probe.connect_ex((host, port)) == 0
-
-
 def find_servers(config: Config) -> list[tuple[int, str]]:
     """Anything on this machine that answers like a model server.
 
     The point is to end the "it is running but the app cannot see it"
     conversation: whatever is listening gets named, with the flag to use.
     """
-    from voicevibecoder.codegen.local_brain import LocalBrain  # noqa: PLC0415
+    from voicevibecoder.codegen.local_brain import (  # noqa: PLC0415
+        SCAN_PORTS,
+        LocalBrain,
+        port_open,
+    )
 
     found: list[tuple[int, str]] = []
     for port in SCAN_PORTS:
-        if not _port_open(port):
+        if not port_open(port):
             continue
         probe = LocalBrain(config.merged(local_url=f"http://127.0.0.1:{port}"))
         models = probe.installed_models()

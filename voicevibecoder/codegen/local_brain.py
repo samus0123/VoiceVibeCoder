@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -59,6 +60,22 @@ RUNNABLE = (".py", ".js", ".sh", ".rb", ".go", ".mjs")
 # nothing answers there, these are tried before giving up.
 DEFAULT_PORTS = (11434, 8080, 1234)
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
+
+# Last resort. Someone who started a server on a port of their own choosing
+# should not have to tell the program which — a closed port on this machine
+# refuses instantly, so trying a few costs nothing.
+SCAN_PORTS = (11434, 8080, 8081, 1234, 5000, 8000, 3000, 5001, 11435)
+
+
+
+def port_open(port: int, host: str = "127.0.0.1") -> bool:
+    """Whether anything is listening, without speaking HTTP to it."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.3)
+            return probe.connect_ex((host, port)) == 0
+    except OSError:
+        return False
 
 _FENCE = re.compile(
     r"^[ \t]*(?P<fence>```+|~~~+)[ \t]*(?P<info>[^\n]*)\n(?P<body>.*?)^[ \t]*(?P=fence)[ \t]*$",
@@ -99,7 +116,27 @@ class LocalBrain:
         llama.cpp without having to say which they are running.
         """
         dialects = [self._dialect] if self._dialect else [OllamaDialect, OpenAIDialect]
-        for url in self.candidate_urls():
+        found = self._try_urls(self.candidate_urls(), dialects)
+        if found is not None:
+            return found
+        # Nothing where we were told to look: sweep this machine for a server
+        # someone started on a port of their own choosing.
+        return self._try_urls(self.scanned_urls(), dialects)
+
+    def scanned_urls(self) -> list[str]:
+        """Local addresses that have something listening on them."""
+        parts = urlsplit(self.config.local_url.rstrip("/"))
+        if parts.hostname not in LOCAL_HOSTS:
+            return []  # a LAN address is a deliberate choice; do not sweep
+        already = set(self.candidate_urls())
+        return [
+            url
+            for port in SCAN_PORTS
+            if (url := f"http://127.0.0.1:{port}") not in already and port_open(port)
+        ]
+
+    def _try_urls(self, urls: list[str], dialects: list[Any]) -> list[str] | None:
+        for url in urls:
             for dialect in dialects:
                 try:
                     payload = self._request(

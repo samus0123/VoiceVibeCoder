@@ -560,3 +560,38 @@ def test_local_candidates_cover_the_usual_servers(config):
 def test_the_setup_help_lists_everywhere_it_looked(config):
     brain = LocalBrain(config, request=FakeServer(OSError("refused"), repeat=True))
     assert "8080" in brain.setup_help()
+
+
+def test_a_server_on_an_unguessed_port_is_swept_up(config, monkeypatch):
+    """Someone who picked their own port should not have to say which."""
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr(local_brain, "port_open", lambda port, host="127.0.0.1": port == 8081)
+
+    def server(url, body, timeout=None):
+        if ":8081" not in url:
+            raise OSError("connection refused")
+        if url.endswith("/api/tags"):
+            raise OSError("404")
+        return {"data": [{"id": "llama-3.2-3b"}]}
+
+    brain = LocalBrain(config, request=server)
+    assert brain.installed_models() == ["llama-3.2-3b"]
+    assert brain.base_url == "http://127.0.0.1:8081"
+
+
+def test_a_lan_address_is_never_swept(config, monkeypatch):
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr(local_brain, "port_open", lambda *_a, **_k: True)
+    brain = LocalBrain(config.merged(local_url="http://192.168.1.20:11434"))
+    assert brain.scanned_urls() == []
+
+
+def test_the_sweep_skips_addresses_already_tried(config, monkeypatch):
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr(local_brain, "port_open", lambda *_a, **_k: True)
+    swept = LocalBrain(config.merged(local_url="http://127.0.0.1:11434")).scanned_urls()
+    assert "http://127.0.0.1:11434" not in swept
+    assert "http://127.0.0.1:8081" in swept

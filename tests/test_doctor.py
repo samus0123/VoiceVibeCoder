@@ -98,7 +98,7 @@ def test_a_server_on_an_unexpected_port_is_found_and_named(config, monkeypatch):
     from voicevibecoder import doctor
     from voicevibecoder.codegen import local_brain
 
-    monkeypatch.setattr(doctor, "_port_open", lambda port, host="127.0.0.1": port == 8081)
+    monkeypatch.setattr(local_brain, "port_open", lambda port, host="127.0.0.1": port == 8081)
     monkeypatch.setattr(
         local_brain.LocalBrain, "installed_models", lambda self: ["llama-3.2-3b"]
     )
@@ -111,7 +111,7 @@ def test_something_listening_that_is_not_a_model_server_is_not_claimed(config, m
     from voicevibecoder import doctor
     from voicevibecoder.codegen import local_brain
 
-    monkeypatch.setattr(doctor, "_port_open", lambda port, host="127.0.0.1": port == 8000)
+    monkeypatch.setattr(local_brain, "port_open", lambda port, host="127.0.0.1": port == 8000)
     monkeypatch.setattr(local_brain.LocalBrain, "installed_models", lambda self: None)
 
     found = doctor.find_servers(config)

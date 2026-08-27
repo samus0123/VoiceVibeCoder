@@ -87,9 +87,10 @@ voicevibe --local-url http://192.168.1.20:11434
 
 **The server is found, not configured.** If nothing answers at the configured
 address and that address is on this machine, the usual ports are tried in turn
-— 11434 (Ollama), 8080 (llama.cpp), 1234 (LM Studio) — so `llama-server -m
-model.gguf` with no `--port` at all still works. A LAN address is treated as a
-deliberate choice and never second-guessed. Whichever model-listing endpoint
+— 11434 (Ollama), 8080 (llama.cpp), 1234 (LM Studio) — and failing that, this
+machine is swept for anything listening that answers like a model server. So
+`llama-server --port 8081`, a port you picked yourself, is found without being
+told. A LAN address is treated as a deliberate choice and never swept. Whichever model-listing endpoint
 answers — Ollama's `/api/tags` or the OpenAI-compatible `/v1/models` — decides
 which dialect it speaks, including how tool results are addressed and how JSON
 schemas are requested. Pin it with `local_api = "ollama"` or `"openai"` if you
@@ -445,7 +446,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 204 tests, no microphone or API key required
+pytest                       # 209 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 
