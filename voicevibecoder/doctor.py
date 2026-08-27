@@ -21,6 +21,17 @@ OK = "ok"
 MISSING = "--"
 
 
+def brain_reachable(config: Config) -> bool:
+    """Whether a build would work right now.
+
+    Exposed so scripts can ask the same question the program asks, instead of
+    curling one port and guessing.
+    """
+    from voicevibecoder.codegen.local_brain import LocalBrain  # noqa: PLC0415
+
+    return _claude_ready() or LocalBrain(config).available()
+
+
 def report(config: Config) -> str:
     """The whole diagnostic, as text meant to be pasted somewhere."""
     lines = ["VoiceVibeCoder — diagnostic", ""]
@@ -155,11 +166,18 @@ def _verdict(config: Config) -> str:
     from voicevibecoder.codegen.local_brain import LocalBrain  # noqa: PLC0415
 
     has_claude = bool(importlib.util.find_spec("anthropic")) and _claude_ready()
-    has_local = LocalBrain(config).available()
+    local = LocalBrain(config)
+    has_local = local.available()
 
-    if has_claude or has_local:
-        which = config.model if has_claude else config.local_model
-        return f"VERDICT: ready to build, using {which}."
+    if has_claude:
+        return f"VERDICT: ready to build, using {config.model}."
+    if has_local:
+        # Name what is actually loaded, not what the config happens to say:
+        # an OpenAI-compatible server serves one model under its own name.
+        return (
+            f"VERDICT: ready to build, using {local.effective_model} "
+            f"at {local.base_url}."
+        )
 
     discovered = [
         port for port, what in find_servers(config) if "not a model server" not in what

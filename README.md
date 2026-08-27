@@ -290,6 +290,10 @@ takes, minus the microphone.
 ./voicevibe --doctor
 ```
 
+It exits 0 when a build would work right now and 1 when it would not, so a
+script can ask the same question the program asks instead of curling a port and
+guessing — which is exactly what `setup-llama` does before installing anything.
+
 One command, every way the setup can be half-finished: Python version, which
 packages are present, whether either brain is reachable, how listening will
 happen, and whether the workspace is writable — ending in a verdict that says

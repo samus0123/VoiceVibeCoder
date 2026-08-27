@@ -141,3 +141,33 @@ def test_nothing_listening_gives_the_plain_advice(config, monkeypatch):
     monkeypatch.setattr(doctor, "find_servers", lambda _c: [])
 
     assert "no brain is reachable" in doctor.report(config)
+
+
+def test_the_verdict_names_the_model_actually_loaded(config, monkeypatch):
+    """Not the configured name, which an OpenAI-compatible server ignores."""
+    from voicevibecoder.codegen import local_brain
+
+    monkeypatch.setattr("voicevibecoder.doctor._claude_ready", lambda: False)
+    monkeypatch.setattr(local_brain.LocalBrain, "available", lambda self: True)
+    monkeypatch.setattr(
+        local_brain.LocalBrain, "effective_model", "llama-3.2-3b"
+    )
+    monkeypatch.setattr(
+        local_brain.LocalBrain, "base_url", "http://127.0.0.1:8081"
+    )
+
+    verdict = report(config.merged(local_model="qwen2.5-coder:7b"))
+    assert "using llama-3.2-3b at http://127.0.0.1:8081" in verdict
+
+
+def test_the_doctor_exit_contract(config, monkeypatch):
+    """Exit 0 means a build would work; scripts depend on this."""
+    from voicevibecoder.codegen import local_brain
+    from voicevibecoder.doctor import brain_reachable
+
+    monkeypatch.setattr("voicevibecoder.doctor._claude_ready", lambda: False)
+    monkeypatch.setattr(local_brain.LocalBrain, "available", lambda self: True)
+    assert brain_reachable(config) is True
+
+    monkeypatch.setattr(local_brain.LocalBrain, "available", lambda self: False)
+    assert brain_reachable(config) is False

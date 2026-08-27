@@ -141,10 +141,12 @@ def main(argv: list[str] | None = None) -> int:
     console = Console(color=not args.no_color)
 
     if args.doctor:
-        from voicevibecoder.doctor import report  # noqa: PLC0415
+        from voicevibecoder.doctor import brain_reachable, report  # noqa: PLC0415
 
         print(report(config))
-        return 0
+        # Exit status is the machine-readable half: 0 means a build would
+        # work right now, so a script can ask without parsing prose.
+        return 0 if brain_reachable(config) else 1
 
     workspace = Workspace(config.workspace)
 

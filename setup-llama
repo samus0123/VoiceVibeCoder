@@ -25,12 +25,17 @@ answering() {
     curl -s -m 3 "http://127.0.0.1:$PORT/api/tags" >/dev/null 2>&1
 }
 
+# Ask the program itself, which sweeps every likely port and both API
+# dialects. Exit 0 from --doctor means a build would work right now.
+brain_ready() {
+    "$here/voicevibe" --doctor >/dev/null 2>&1
+}
+
 # --- 0. is one already running? -------------------------------------------
-# Asked before anything else: someone who already has a server up, or who
-# forwarded a desktop one to this port, should not be made to install or
-# download a thing.
-if answering; then
-    say "a model server is already answering on port $PORT"
+# Asked before anything else: someone who already has a server up — on any
+# port, started any way — should not be made to install or download a thing.
+if brain_ready; then
+    say "a brain is already reachable"
     [ "$1" = "--serve-only" ] && exit 0
     say "starting VoiceVibeCoder"
     exec "$here/voicevibe" --brain local --local-url "http://127.0.0.1:$PORT" "$@"
