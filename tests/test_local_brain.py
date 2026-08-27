@@ -507,3 +507,56 @@ def test_ollama_still_routes_by_the_configured_name(config):
     brain.turn("system", "go", [], tools())
     _url, body = server.requests[-1]
     assert body["model"] == "llama3.1:8b"
+
+
+def test_a_server_on_the_llama_cpp_default_port_is_found(config):
+    """llama-server defaults to 8080; nobody should have to know that."""
+
+    class Server:
+        def __init__(self):
+            self.urls = []
+
+        def __call__(self, url, body, timeout=None):
+            self.urls.append(url)
+            if ":8080" not in url:
+                raise OSError("connection refused")
+            if url.endswith("/api/tags"):
+                raise OSError("404")
+            return {"data": [{"id": "llama-3.2-3b"}]}
+
+    server = Server()
+    brain = LocalBrain(config, request=server)
+
+    assert brain.installed_models() == ["llama-3.2-3b"]
+    assert brain.base_url == "http://localhost:8080"
+    assert brain.api_name == "openai"
+
+
+def test_the_configured_address_is_tried_first(config):
+    urls = []
+
+    def server(url, body, timeout=None):
+        urls.append(url)
+        return {"models": [{"name": "qwen2.5-coder:7b"}]}
+
+    LocalBrain(config, request=server).installed_models()
+    assert urls[0].startswith("http://localhost:11434")
+
+
+def test_a_remote_address_is_never_second_guessed(config):
+    """A LAN address is a deliberate choice; do not go poking at other ports."""
+    brain = LocalBrain(config.merged(local_url="http://192.168.1.20:11434"))
+    assert brain.candidate_urls() == ["http://192.168.1.20:11434"]
+
+
+def test_local_candidates_cover_the_usual_servers(config):
+    candidates = LocalBrain(config).candidate_urls()
+    assert candidates[0] == "http://localhost:11434"
+    assert "http://localhost:8080" in candidates    # llama.cpp
+    assert "http://localhost:1234" in candidates    # LM Studio
+    assert len(candidates) == len(set(candidates))
+
+
+def test_the_setup_help_lists_everywhere_it_looked(config):
+    brain = LocalBrain(config, request=FakeServer(OSError("refused"), repeat=True))
+    assert "8080" in brain.setup_help()

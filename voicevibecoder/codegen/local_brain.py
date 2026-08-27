@@ -34,6 +34,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
 from typing import Any
+from urllib.parse import urlsplit
 
 from voicevibecoder.codegen.brain import Reply, ToolCall, ToolResult
 from voicevibecoder.config import Config
@@ -51,6 +52,13 @@ file.
 """
 
 RUNNABLE = (".py", ".js", ".sh", ".rb", ".go", ".mjs")
+
+# Where local model servers live by default. Ollama picks 11434, llama.cpp and
+# LM Studio pick 8080 and 1234 — and someone who just started one of them has
+# no reason to know which. When the configured address is on this machine and
+# nothing answers there, these are tried before giving up.
+DEFAULT_PORTS = (11434, 8080, 1234)
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 
 _FENCE = re.compile(
     r"^[ \t]*(?P<fence>```+|~~~+)[ \t]*(?P<info>[^\n]*)\n(?P<body>.*?)^[ \t]*(?P=fence)[ \t]*$",
@@ -77,6 +85,7 @@ class LocalBrain:
         self._call_counter = 0
         self._dialect: Any = DIALECTS.get(config.local_api)  # None means "probe"
         self._served: list[str] | None = None
+        self._found_url: str = ""
 
     # -- availability ----------------------------------------------------
     def available(self) -> bool:
@@ -89,22 +98,36 @@ class LocalBrain:
         us which API this server speaks, so a person can point at Ollama or at
         llama.cpp without having to say which they are running.
         """
-        candidates = (
-            [self._dialect] if self._dialect else [OllamaDialect, OpenAIDialect]
-        )
-        for dialect in candidates:
-            try:
-                payload = self._request(
-                    f"{self.base_url}{dialect.models_path}", None, timeout=5
-                )
-            except (OSError, ValueError):
-                continue
-            if isinstance(payload, list):  # a stub handed back chunks
-                payload = payload[-1] if payload else {}
-            self._dialect = dialect
-            self._served = dialect.models_of(payload)
-            return self._served
+        dialects = [self._dialect] if self._dialect else [OllamaDialect, OpenAIDialect]
+        for url in self.candidate_urls():
+            for dialect in dialects:
+                try:
+                    payload = self._request(
+                        # Short: a local server either answers at once or is
+                        # not there, and several addresses are tried in turn.
+                        f"{url}{dialect.models_path}",
+                        None,
+                        timeout=2,
+                    )
+                except (OSError, ValueError):
+                    continue
+                if isinstance(payload, list):  # a stub handed back chunks
+                    payload = payload[-1] if payload else {}
+                self._dialect = dialect
+                self._found_url = url
+                self._served = dialect.models_of(payload)
+                return self._served
         return None
+
+    def candidate_urls(self) -> list[str]:
+        """The configured address first, then the usual local ports."""
+        configured = self.config.local_url.rstrip("/")
+        urls = [configured]
+        parts = urlsplit(configured)
+        if parts.hostname in LOCAL_HOSTS:
+            host = f"{parts.scheme}://{parts.hostname}"
+            urls += [f"{host}:{port}" for port in DEFAULT_PORTS]
+        return list(dict.fromkeys(urls))  # ordered, deduplicated
 
     @property
     def dialect(self) -> Any:
@@ -142,7 +165,8 @@ class LocalBrain:
         models = self.installed_models()
         if models is None:
             return (
-                f"no local model server at {self.base_url}.\n"
+                "no local model server at "
+                f"{', '.join(self.candidate_urls())}.\n"
                 "  Ollama:     https://ollama.com  then  "
                 f"ollama pull {self.config.local_model}\n"
                 "  llama.cpp:  llama-server -m <model.gguf> --port 11434\n"
@@ -161,7 +185,8 @@ class LocalBrain:
 
     @property
     def base_url(self) -> str:
-        return self.config.local_url.rstrip("/")
+        """Where the server actually answered, or where we were told to look."""
+        return self._found_url or self.config.local_url.rstrip("/")
 
     # -- Brain -----------------------------------------------------------
     def reset(self) -> None:

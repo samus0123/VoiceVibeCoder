@@ -377,6 +377,7 @@ class Session:
     # ------------------------------------------------------------------
     def _build(self, instruction: str, spoken: str) -> bool:
         self.workspace.snapshot(spoken)
+        self._working("writing it")
         try:
             result = self.generator.build(instruction, self.workspace)
         except Exception as exc:  # noqa: BLE001 — one bad turn is not fatal
@@ -436,6 +437,7 @@ class Session:
             if result is None or result.ok:
                 return
             self._respond("Fixing it.")  # the error itself was just spoken
+            self._working("fixing it")
             try:
                 repair = self.generator.repair(result.transcript(), self.workspace)
             except Exception as exc:  # noqa: BLE001
@@ -483,6 +485,7 @@ class Session:
         self._respond("Want me to fix it? Say yes or no.")
 
     def _answer(self, question: str) -> bool:
+        self._working("reading the code")
         try:
             answer = self.generator.explain(question, self.workspace)
         except Exception as exc:  # noqa: BLE001
@@ -538,6 +541,16 @@ class Session:
                 handle.write(json.dumps(entry) + "\n")
         except OSError:
             pass  # journalling is a convenience, never a reason to stop
+
+    def _working(self, what: str) -> None:
+        """Show that a slow model is being waited on, not that we have hung.
+
+        A local model on a phone can take a minute to answer, and a prompt that
+        simply sits there is indistinguishable from a crash.
+        """
+        brain = getattr(self.generator, "brain_name", "")
+        where = f" ({brain})" if brain and brain != "not connected yet" else ""
+        self.console.write(f"  ⋯  {what}{where}", "dim")
 
     def _respond(self, text: str) -> None:
         text = (text or "").strip()
