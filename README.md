@@ -230,13 +230,23 @@ prebuilt wheel for your Termux target, `pkg install rust` first and expect a
 long build.
 
 **A brain on the phone itself.** `llama.cpp` is packaged for Termux, so this
-needs no desktop and no network once the model file is down:
+needs no desktop and no network once the model file is down. One command does
+all of it:
 
 ```bash
-pkg install llama-cpp
-curl -L -o model.gguf <a Q4_K_M GGUF from huggingface.co>
-llama-server -m model.gguf --port 11434 &
-./voicevibe --brain local
+./setup-llama
+```
+
+It installs `llama-cpp` if it is missing, downloads a Llama 3.2 3B GGUF
+(resuming if the connection drops), starts the server, waits for the model to
+load, and launches VoiceVibeCoder pointed at it. Re-running skips whatever is
+already done, and if a server is already answering it goes straight to the
+program without installing anything.
+
+```bash
+./setup-llama --serve-only          # just the server
+MODEL_URL=<url> ./setup-llama       # a different GGUF
+PORT=8080 ./setup-llama             # a different port
 ```
 
 A handset realistically runs a 1–3B model. Llama 3.2 3B works; a coder-tuned

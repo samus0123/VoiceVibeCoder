@@ -1,0 +1,97 @@
+#!/usr/bin/env sh
+# Get a Llama brain running and hand it to VoiceVibeCoder.
+#
+#   ./setup-llama                 # install, download, serve, launch
+#   ./setup-llama --serve-only    # just start the server
+#   MODEL_URL=... ./setup-llama   # use a different GGUF
+#
+# Safe to re-run: it skips whatever is already done. The download resumes if
+# it was interrupted, which on a phone it will be.
+
+set -e
+
+PORT=${PORT:-11434}
+MODEL_DIR=${MODEL_DIR:-$HOME/models}
+MODEL_FILE=${MODEL_FILE:-$MODEL_DIR/llama.gguf}
+MODEL_URL=${MODEL_URL:-https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf}
+CTX=${CTX:-8192}
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+say() { printf '\n==> %s\n' "$1"; }
+die() { printf '\n!!  %s\n' "$1" >&2; exit 1; }
+
+answering() {
+    curl -s -m 3 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 ||
+    curl -s -m 3 "http://127.0.0.1:$PORT/api/tags" >/dev/null 2>&1
+}
+
+# --- 0. is one already running? -------------------------------------------
+# Asked before anything else: someone who already has a server up, or who
+# forwarded a desktop one to this port, should not be made to install or
+# download a thing.
+if answering; then
+    say "a model server is already answering on port $PORT"
+    [ "$1" = "--serve-only" ] && exit 0
+    say "starting VoiceVibeCoder"
+    exec "$here/voicevibe" --brain local --local-url "http://127.0.0.1:$PORT" "$@"
+fi
+
+# --- 1. the server ---------------------------------------------------------
+if command -v llama-server >/dev/null 2>&1; then
+    say "llama-server is installed"
+elif command -v pkg >/dev/null 2>&1; then
+    say "installing llama-cpp"
+    pkg install -y llama-cpp || die "pkg install llama-cpp failed. Try: pkg upgrade"
+    command -v llama-server >/dev/null 2>&1 ||
+        die "llama-cpp installed but llama-server is missing. Check: ls \$PREFIX/bin | grep llama"
+else
+    die "No llama-server and no pkg command.
+  Termux:  pkg install llama-cpp
+  macOS:   brew install llama.cpp
+  Linux:   https://github.com/ggml-org/llama.cpp"
+fi
+
+# --- 2. the model ----------------------------------------------------------
+if [ -f "$MODEL_FILE" ] && [ "$(head -c 4 "$MODEL_FILE" 2>/dev/null)" = "GGUF" ]; then
+    say "model already downloaded: $MODEL_FILE"
+else
+    command -v curl >/dev/null 2>&1 || die "curl is missing. Run: pkg install curl"
+    mkdir -p "$MODEL_DIR"
+    say "downloading the model (a few GB — this is the slow part)"
+    printf '    %s\n' "$MODEL_URL"
+    # -C - resumes a partial file, which matters on a phone connection.
+    curl -L -C - -o "$MODEL_FILE" "$MODEL_URL" || die "download failed — re-run to resume"
+
+    # A 404 page saved as .gguf is the classic failure here, and the error it
+    # causes later is unreadable. Catch it now, while the cause is obvious.
+    if [ "$(head -c 4 "$MODEL_FILE" 2>/dev/null)" != "GGUF" ]; then
+        rm -f "$MODEL_FILE"
+        die "that URL did not return a model file (probably a 404 page).
+  Open the model page in a browser, copy the real Q4_K_M filename, then:
+  MODEL_URL=<url> $0"
+    fi
+fi
+
+# --- 3. serve it -----------------------------------------------------------
+say "starting llama-server on port $PORT"
+nohup llama-server -m "$MODEL_FILE" --port "$PORT" --ctx-size "$CTX" \
+    >"$MODEL_DIR/llama-server.log" 2>&1 &
+
+printf '    loading the model'
+waited=0
+while [ "$waited" -lt 180 ]; do
+    answering && break
+    printf '.'
+    sleep 2
+    waited=$((waited + 2))
+done
+printf '\n'
+answering || die "the server did not come up within ${waited}s.
+  Log: $MODEL_DIR/llama-server.log"
+say "server is up (log: $MODEL_DIR/llama-server.log)"
+
+[ "$1" = "--serve-only" ] && exit 0
+
+# --- 4. hand it to VoiceVibeCoder -----------------------------------------
+say "starting VoiceVibeCoder"
+exec "$here/voicevibe" --brain local --local-url "http://127.0.0.1:$PORT" "$@"
