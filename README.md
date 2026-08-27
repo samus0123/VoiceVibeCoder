@@ -229,6 +229,20 @@ desktop path keeps dictated code on the machine; this one does not. And **the
 prebuilt wheel for your Termux target, `pkg install rust` first and expect a
 long build.
 
+**A brain on the phone itself.** `llama.cpp` is packaged for Termux, so this
+needs no desktop and no network once the model file is down:
+
+```bash
+pkg install llama-cpp
+curl -L -o model.gguf <a Q4_K_M GGUF from huggingface.co>
+llama-server -m model.gguf --port 11434 &
+./voicevibe --brain local
+```
+
+A handset realistically runs a 1–3B model. Llama 3.2 3B works; a coder-tuned
+model of the same size (`qwen2.5-coder:1.5b`) follows the file protocol more
+reliably, which is what actually decides whether you get a working program.
+
 **Fully off the cloud on a phone:** point the local brain at a model server on
 your desktop and nothing leaves your LAN except over your own wire.
 
@@ -398,7 +412,7 @@ commit_mode = "auto"        # auto | typed | off
 
 ```bash
 pip install -e '.[dev]'
-pytest                       # 191 tests, no microphone or API key required
+pytest                       # 193 tests, no microphone or API key required
 ruff check voicevibecoder
 ```
 

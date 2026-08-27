@@ -472,3 +472,38 @@ def test_structured_payloads_are_not_echoed_to_the_console(config):
     brain.structured("sys", "prompt", {"type": "object"})
 
     assert streamed == []  # JSON is data, not narration
+
+
+def test_a_llama_cpp_server_is_addressed_by_the_model_it_serves(config):
+    """llama-server loads one model and ignores the requested name."""
+
+    class Server:
+        def __init__(self):
+            self.requests = []
+
+        def __call__(self, url, body, timeout=None):
+            self.requests.append((url, body))
+            if url.endswith("/api/tags"):
+                raise OSError("404")
+            if url.endswith("/v1/models"):
+                return {"data": [{"id": "Llama-3.2-3B-Instruct-Q4_K_M.gguf"}]}
+            return openai_chat("nothing to do")
+
+    server = Server()
+    brain = LocalBrain(config.merged(local_model="qwen2.5-coder:7b"), request=server)
+
+    # No "not pulled yet, ollama pull ..." nonsense for a server that has no
+    # concept of pulling.
+    assert brain.setup_help() == "ready — serving Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+
+    brain.turn("system", "go", [], tools())
+    _url, body = server.requests[-1]
+    assert body["model"] == "Llama-3.2-3B-Instruct-Q4_K_M.gguf"
+
+
+def test_ollama_still_routes_by_the_configured_name(config):
+    server = FakeServer({"models": [{"name": "llama3.1:8b"}]}, chat("ok"))
+    brain = LocalBrain(config.merged(local_model="llama3.1:8b"), request=server)
+    brain.turn("system", "go", [], tools())
+    _url, body = server.requests[-1]
+    assert body["model"] == "llama3.1:8b"

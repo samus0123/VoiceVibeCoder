@@ -76,6 +76,7 @@ class LocalBrain:
         self._history: list[dict[str, Any]] = []
         self._call_counter = 0
         self._dialect: Any = DIALECTS.get(config.local_api)  # None means "probe"
+        self._served: list[str] | None = None
 
     # -- availability ----------------------------------------------------
     def available(self) -> bool:
@@ -101,7 +102,8 @@ class LocalBrain:
             if isinstance(payload, list):  # a stub handed back chunks
                 payload = payload[-1] if payload else {}
             self._dialect = dialect
-            return dialect.models_of(payload)
+            self._served = dialect.models_of(payload)
+            return self._served
         return None
 
     @property
@@ -119,6 +121,23 @@ class LocalBrain:
         if not self.available():
             raise RuntimeError(self.setup_help())
 
+    @property
+    def effective_model(self) -> str:
+        """The model name to actually send.
+
+        Ollama routes by name, so the configured name matters. An
+        OpenAI-compatible server like llama-server has one model loaded and
+        ignores the field — so rather than refuse because the configured name
+        does not match, use whatever that server says it is serving.
+        """
+        configured = self.config.local_model
+        if self.dialect is not OpenAIDialect:
+            return configured
+        served = self._served or []
+        if served and not _has_model(served, configured):
+            return served[0]
+        return configured
+
     def setup_help(self) -> str:
         models = self.installed_models()
         if models is None:
@@ -129,6 +148,9 @@ class LocalBrain:
                 "  llama.cpp:  llama-server -m <model.gguf> --port 11434\n"
                 "  Either works — whichever answers is the one it talks to."
             )
+        if self.dialect is OpenAIDialect:
+            # One loaded model, addressed by whatever name it reports.
+            return f"ready — serving {self.effective_model}"
         if not _has_model(models, self.config.local_model):
             return (
                 f"{self.config.local_model} is not pulled yet — "
@@ -247,7 +269,7 @@ class LocalBrain:
     ) -> dict[str, Any]:
         dialect = self.dialect
         body = dialect.body(
-            self.config.local_model, system, messages, tools, schema, stream
+            self.effective_model, system, messages, tools, schema, stream
         )
 
         try:
