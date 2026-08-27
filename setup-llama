@@ -31,6 +31,15 @@ brain_ready() {
     "$here/voicevibe" --doctor >/dev/null 2>&1
 }
 
+# Something bound to the port, even if it is not answering yet. A model server
+# that is still loading listens immediately and answers minutes later, and
+# starting a second one on top of it just fails to bind.
+port_listening() {
+    code=0
+    curl -s -o /dev/null -m 2 "http://127.0.0.1:$PORT/" 2>/dev/null || code=$?
+    [ "$code" -ne 7 ]
+}
+
 # --- 0. is one already running? -------------------------------------------
 # Asked before anything else: someone who already has a server up — on any
 # port, started any way — should not be made to install or download a thing.
@@ -78,21 +87,40 @@ else
 fi
 
 # --- 3. serve it -----------------------------------------------------------
-say "starting llama-server on port $PORT"
-nohup llama-server -m "$MODEL_FILE" --port "$PORT" --ctx-size "$CTX" \
-    >"$MODEL_DIR/llama-server.log" 2>&1 &
+if port_listening; then
+    # Do not start a competing process: the one that is there owns the port,
+    # and a second llama-server would only fail to bind.
+    say "something is already on port $PORT — waiting for it to finish loading"
+    started_one=no
+else
+    say "starting llama-server on port $PORT"
+    nohup llama-server -m "$MODEL_FILE" --port "$PORT" --ctx-size "$CTX" \
+        >"$MODEL_DIR/llama-server.log" 2>&1 &
+    started_one=yes
+fi
 
-printf '    loading the model'
+printf '    loading the model (first load of a big model is slow)'
 waited=0
-while [ "$waited" -lt 180 ]; do
+while [ "$waited" -lt 600 ]; do
     answering && break
     printf '.'
-    sleep 2
-    waited=$((waited + 2))
+    sleep 3
+    waited=$((waited + 3))
 done
 printf '\n'
-answering || die "the server did not come up within ${waited}s.
-  Log: $MODEL_DIR/llama-server.log"
+
+if ! answering; then
+    printf '\n!!  no answer after %ss.\n' "$waited" >&2
+    if [ "$started_one" = yes ] && [ -f "$MODEL_DIR/llama-server.log" ]; then
+        printf '\n--- last lines of %s ---\n' "$MODEL_DIR/llama-server.log" >&2
+        tail -n 15 "$MODEL_DIR/llama-server.log" >&2
+        printf -- '---\n' >&2
+    fi
+    die "the model server is not answering.
+  'address already in use'  -> one is already running; just: ./voicevibe --text
+  'killed' or nothing at all -> out of memory; use a smaller model
+  still loading             -> re-run this; it will wait again"
+fi
 say "server is up (log: $MODEL_DIR/llama-server.log)"
 
 [ "$1" = "--serve-only" ] && exit 0
